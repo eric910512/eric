@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/* Design tokens (ui-architecture.md §1.2 semantic colours) */
+@theme {
+  --font-sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+
+  --color-ink: #1d2b3a;
+  --color-ink-soft: #52606d;
+  --color-mist: #eef3f6;
+  --color-surface: #ffffff;
+  --color-line: #d9e2e8;
+
+  /* info — general information */
+  --color-care: #2f6b8a;
+  --color-care-soft: #e3eef4;
+
+  /* action-required — 黃底紅字: the patient has to do something */
+  --color-action: #fde9a8;
+  --color-action-ink: #a5281b;
+
+  --color-ok: #2e7d5b;
+  --color-ok-soft: #e1f2ea;
+  --color-warn: #9a5b00;
+  --color-warn-soft: #fdf1da;
+  --color-critical: #c0362c;
+  --color-critical-soft: #fbe4e1;
+  --color-muted: #8795a1;
+
+  /* nadir — low-immunity window, used nowhere else */
+  --color-nadir: #6b4fa3;
+  --color-nadir-soft: #e7e0f5;
+}
+
+@layer base {
+  html {
+    font-size: 106.25%; /* 17px base for older readers */
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-mist text-ink antialiased;
+    font-feature-settings: "tnum" 1;
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-care);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

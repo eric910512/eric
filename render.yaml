@@ -1,0 +1,100 @@
+# Render Blueprint — staging / demo environment of the Cancer Care Platform.
+# Synthetic demo data only (no real patient data). Review, then create it from the Render
+# Dashboard: New → Blueprint → pick this repository.
+#
+# Architecture (same-origin): Browser → Static Site (Vue build) on one origin; its /api/* rewrite
+# proxies to the Web Service (Flask + Gunicorn) → PostgreSQL (internal connection string).
+# The browser never talks to the API host directly, so the refresh-token cookie (HttpOnly, Secure,
+# SameSite=Strict, Path=/api/v1/auth) is first-party. Same region for all three.
+
+databases:
+  - name: cancer-care-db
+    # free: 1 GB, expires 30 days after creation. For a longer-lived demo use a paid plan
+    # (e.g. basic-256mb) — change it here or in the Dashboard before creating the Blueprint.
+    plan: free
+    region: singapore
+    databaseName: cancer_care
+    user: cancer_care
+    postgresMajorVersion: "17"
+    ipAllowList: []  # no external connections; the web service uses the internal URL
+
+services:
+  - type: web
+    name: cancer-care-api
+    runtime: python
+    # free: sleeps after 15 min without traffic (~1 min to wake). starter keeps it running.
+    plan: free
+    region: singapore
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash scripts/render_start.sh
+    healthCheckPath: /api/v1/health
+    autoDeploy: false
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FLASK_ENV
+        value: staging  # production hardening + synthetic demo data allowed
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cancer-care-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS  # the static site's URL (the browser's origin), e.g. https://cancer-care-web.onrender.com
+        sync: false
+      # FIRST demo / verification deploy only: loads the synthetic demo data on every start (and
+      # resets the demo accounts' passwords to SEED_DEMO_PASSWORD). After the smoke test passes, set
+      # it to "false" in the Dashboard (DEPLOYMENT.md §8). Never seed a production (FLASK_ENV=production)
+      # database — `flask seed dev` refuses to run there anyway (ALLOW_DEMO_SEED=False).
+      - key: SEED_DEMO_DATA
+        value: "true"
+      - key: SEED_DEMO_PASSWORD  # password of the demo accounts — choose a private one
+        sync: false
+      - key: WEB_CONCURRENCY
+        value: "2"
+      # Trusted proxies in front of Flask for X-Forwarded-For (audit / 登入裝置 IP). 1 = Render's own
+      # proxy. Requests arrive through the static site's /api rewrite as well: if the recorded IP is
+      # not the user's after the first deploy, set 2 (DEPLOYMENT.md §6).
+      - key: PROXY_FIX_HOPS
+        value: "1"
+
+  - type: web
+    name: cancer-care-web
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: ./frontend/dist
+    autoDeploy: false
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: VITE_USE_MOCK
+        value: "false"
+      - key: VITE_API_TIMEOUT_MS  # covers a Free instance waking up
+        value: "60000"
+    routes:
+      # Same-origin API: /api/* is proxied to the Web Service (the app calls the relative /api/v1).
+      # Must stay BEFORE the SPA rule. Replace the host if Render gave the API service another URL.
+      - type: rewrite
+        source: /api/*
+        destination: https://cancer-care-api.onrender.com/api/*
+      # Vue Router uses HTML5 history: every path without a file serves the app.
+      # Rewrites only apply when no file matches, so /assets/* is served as-is.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: X-Frame-Options
+        value: DENY

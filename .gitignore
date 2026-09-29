@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------- environments / secrets
+venv/
+.venv/
+.env
+.env.local
+.env.*.local
+# (the .env.example files are committed on purpose: variable documentation, no secrets)
+
+# ---------------------------------------------------------------- Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------- Node / frontend build
+node_modules/
+dist/
+
+# ---------------------------------------------------------------- local databases (never deploy data)
+# Render uses PostgreSQL; these are development / test SQLite files.
+instance/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ---------------------------------------------------------------- local test output
+# E2E runs write screenshots, server logs and a throw-away database here.
+frontend/e2e/.artifacts/
+*.log
+logs/
+
+# ---------------------------------------------------------------- editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
