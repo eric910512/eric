@@ -59,6 +59,7 @@ const GROUPS = [
   { suites: ['admin'] },
   { suites: ['reminders'] },
   { suites: ['sessions'] },
+  { suites: ['profile-email'] },
   // 1-minute access tokens (the existing JWT_ACCESS_TOKEN_MINUTES setting): real expiry → refresh
   { suites: ['refresh'], env: { JWT_ACCESS_TOKEN_MINUTES: '1' } },
   ...(PROD ? [{ suites: ['deploy'] }] : []),
@@ -129,6 +130,10 @@ process.on('SIGINT', async () => { await Promise.all([...children].map(stop)); p
 
 // ------------------------------------------------------------------ stack
 const DB_FILE = path.join(OUT, 'e2e.db')
+// Development stack: EMAIL_PROVIDER=capture (development default) writes each email as a JSON file
+// here; the suites read verification links / notification emails from it. Nothing is sent. The
+// production simulation (staging) keeps the default EMAIL_PROVIDER=disabled: no email at all.
+const EMAIL_OUTBOX = path.join(OUT, 'email-outbox')
 const backendEnv = () => (PROD
   ? {
       FLASK_ENV: 'staging',
@@ -140,7 +145,10 @@ const backendEnv = () => (PROD
       FLASK_DEBUG: '',
       PYTHONIOENCODING: 'utf-8',
     }
-  : { FLASK_ENV: 'development', DATABASE_URL: `sqlite:///${DB_FILE.replaceAll('\\', '/')}`, PYTHONIOENCODING: 'utf-8' })
+  : {
+      FLASK_ENV: 'development', DATABASE_URL: `sqlite:///${DB_FILE.replaceAll('\\', '/')}`, PYTHONIOENCODING: 'utf-8',
+      EMAIL_PROVIDER: 'capture', EMAIL_CAPTURE_DIR: EMAIL_OUTBOX, APP_BASE_URL: URL.web,
+    })
 
 async function startFrontends() {
   await ensureFree(PORT.mock)
@@ -172,6 +180,7 @@ async function startBackend(label, extraEnv = {}) {
     await started(pg, `postgresql://${HOST}:${PORT.pg}`, portOpen(PORT.pg))
   } else {
     for (const f of [DB_FILE, `${DB_FILE}-journal`]) fs.rmSync(f, { force: true })
+    fs.rmSync(EMAIL_OUTBOX, { recursive: true, force: true })
   }
   const env = { ...backendEnv(), ...extraEnv }
   for (const step of [['db', 'upgrade'], ['seed', 'dev']]) {
@@ -202,7 +211,8 @@ function runSuite(suite) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(E2E_DIR, `${suite}.e2e.mjs`)], {
       cwd: FRONTEND_DIR,
-      env: { ...process.env, E2E_MOCK_URL: URL.mock, E2E_WEB_URL: URL.web, E2E_API_URL: URL.api, E2E_ARTIFACTS: OUT },
+      env: { ...process.env, E2E_MOCK_URL: URL.mock, E2E_WEB_URL: URL.web, E2E_API_URL: URL.api, E2E_ARTIFACTS: OUT,
+        E2E_EMAIL_OUTBOX: PROD ? '' : EMAIL_OUTBOX, E2E_PROD: PROD ? '1' : '' },
       windowsHide: true,
     })
     let out = ''

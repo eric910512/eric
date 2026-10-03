@@ -5,11 +5,14 @@
  * scheduled_for at least 1 minute and at most 1 year ahead; the patient needs an account; optional
  * Idempotency-Key. The staff copy lives with the other mock notifications (`@/mock/nurseReview`,
  * same lifecycle); the patient sees the reminder in their notification list once it is due.
+ * Email channel (`@/mock/profile`): a summary email when the patient's contact email is verified and
+ * email notifications are on; `email_delivery` on the staff copy (a replay never sends again).
  */
 import { nowIso } from '@/mock/clock'
 import { addMockReminder, mockReminderRows, mockReminderView } from '@/mock/nurseReview'
 import { patientDashboards } from '@/mock/patientDashboards'
 import { MockApiError, mockAccessPatient, mockCurrentUser } from '@/mock/patients'
+import { mockDeliverReminderEmail } from '@/mock/profile'
 
 const MIN_AHEAD = 60e3
 const MAX_AHEAD = 366 * 86400e3
@@ -51,11 +54,14 @@ function create(body) {
   if (d.length) throw invalid(d)
   if (!patient.account_email) throw new MockApiError(422, 'NO_PATIENT_ACCOUNT', '這位病人尚未開通登入帳號，無法收到提醒')
   const created = nowIso()
+  const scheduledFor = at ? new Date(at).toISOString() : null
   const n = addMockReminder({
     severity: body.severity ?? 'info', title: body.title.trim(), message: body.message.trim(),
     patient: { id: patient.id, patient_code: patient.patient_code, display_name: patient.display_name },
-    origin: at ? 'scheduled' : 'manual', scheduled_for: at ? new Date(at).toISOString() : null, created_at: created,
+    origin: at ? 'scheduled' : 'manual', scheduled_for: scheduledFor, created_at: created,
   })
+  // second channel (= delivery.py): the reminder exists first; the email outcome never fails it
+  n.email_delivery = mockDeliverReminderEmail(patient.id, { scheduledFor, sentAt: scheduledFor ?? created })
   return { data: mockReminderView(n) }
 }
 

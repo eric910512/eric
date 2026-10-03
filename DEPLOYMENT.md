@@ -78,6 +78,9 @@ Migration 在 start command 執行（Free 方案沒有 pre-deploy command 與 Sh
 | `PROXY_FIX_HOPS` | `1` | 見 §6 |
 | `WEB_CONCURRENCY` | `2` | Gunicorn worker 數 |
 | `JWT_ACCESS_TOKEN_MINUTES` | 不設定（預設 `15`） | Access token 有效分鐘數；前端會在到期前自動 refresh |
+| `EMAIL_PROVIDER` | **目前不設定**（= `disabled`） | 病人通知 Email（2026-10-02）。尚未選定正式 Email 服務：不寄任何信，通知的 Email 記為 `skipped / not_configured`，App 通知照常；病人無法完成 Email 驗證。`capture`（開發測試用）在 staging / production 會被拒絕啟動 |
+| `EMAIL_API_KEY`、`EMAIL_FROM`、`EMAIL_FROM_NAME` | **目前不設定** | 選定服務（Resend / SendGrid / SES / SMTP 之一）並實作後，才在 Dashboard → Environment 手動輸入；`EMAIL_API_KEY` 是 secret，**不要寫進 `render.yaml` 或 repository**。設定真實服務時 `EMAIL_API_KEY`、`EMAIL_FROM` 缺一會拒絕啟動 |
+| `APP_BASE_URL`、`EMAIL_TIMEOUT_SECONDS` | **目前不設定** | 啟用正式服務時：`APP_BASE_URL` = 前端 https 網址（Email 驗證連結用，必填）；`EMAIL_TIMEOUT_SECONDS` 預設 10（寄信在 request 中同步執行） |
 
 **cancer-care-web**（建置時寫入，修改後需要重新部署）
 
@@ -154,6 +157,7 @@ Migration 在 start command 執行（Free 方案沒有 pre-deploy command 與 Sh
 - `DEBUG` 開啟（包含 `FLASK_DEBUG=1`）
 - `DATABASE_URL` 不是 PostgreSQL
 - `CORS_ORIGINS` 沒設定、含 `*`，或不是 https（本機模擬允許 `http://localhost`）
+- `EMAIL_PROVIDER` 是 `capture`（開發測試用）或不支援的值；設定真實服務時缺 `EMAIL_API_KEY` / `EMAIL_FROM` 或 `APP_BASE_URL` 不是 https
 
 `GET /api/v1/health` → `200 {"status": "ok", "database": "ok"}`；資料庫無法連線時回 `503`，Render 不會把流量導到壞掉的部署。`/api/*` 的 CORS preflight 一律回 200（是否允許由 `CORS_ORIGINS` 決定）。
 

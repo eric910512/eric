@@ -1,10 +1,10 @@
 # Cancer Care Platform — REST API Architecture (v1.1)
 
 > 狀態：設計文件；部分 Phase 1 endpoint 已實作（見「實作狀態」）
-> 更新日期：2026-09-29（Sprint 6：病人端完整功能）
+> 更新日期：2026-10-02（病人基本資料 + Email 通知）
 > 依據：`docs/database-design.md`（v3.1）、`docs/ui-architecture.md`（v1）
 
-## 實作狀態（2026-09-29）
+## 實作狀態（2026-10-02）
 
 以下 endpoint 已實作（`backend/app/modules/`）；本文件其他 endpoint 仍是設計，尚未實作。詳細行為以 `backend/README.md` 為準。
 
@@ -23,6 +23,7 @@
 | nursing | Sprint 4：`GET/POST /api/v1/nursing-assessments`、`GET/PATCH /nursing-assessments/{id}`、`GET /{id}/versions`、`POST /{id}/sign`、`POST /{id}/amend`、`PATCH /{id}/items/{item_id}`（見 §9 實作說明） |
 | corrections | Sprint 5：`POST /symptoms/records/{id}/amend|mark-error`、`GET /symptoms/records/{id}/history`、`POST /vital-signs/{id}/amend|mark-error`、`GET /vital-signs/{id}/history`、`GET /vital-signs/patient/{pid}`、`POST /labs/results/{id}/amend|mark-error`、`GET /labs/results/{id}/history`、`GET /labs/abnormal`、`GET /dashboard/widgets/pending-symptom-reviews/data`（見 §1.6 實作說明） |
 | admin | Sprint 1：`GET /api/v1/admin/users?role=nurse`、`POST /api/v1/admin/users`（只建立護理師，見 §13 實作說明） |
+| profile / email（2026-10-02） | `GET /api/v1/patients/{pid|me}/profile`、`PATCH /api/v1/patients/me/profile`、`GET /api/v1/patients/{pid|me}/weights`、`POST /api/v1/patients/me/email-verification`、`POST /api/v1/patients/me/email-verification/confirm`；`POST /api/v1/notifications` 增加 Email 管道（`email_delivery`），見 §4、§10 實作說明 |
 
 尚未實作：其餘 dashboard widget data endpoint、`GET /api/v1/settings/{key}`、patient 的 Phase 2 子資源（contacts / consents / clinical-events）、education、其餘 admin endpoint（停用 / 重設密碼 / audit-logs 查詢等）、AI。
 
@@ -118,7 +119,7 @@
 | 403 | `FORBIDDEN` | 角色不允許 |
 | 404 | `NOT_FOUND` | 資源不存在，或無權存取該病人 |
 | 409 | `CONFLICT`、`VERSION_CONFLICT`、`IDEMPOTENCY_IN_PROGRESS` | 重複 / 樂觀鎖衝突 / 相同 key 的請求還在處理中 |
-| 422 | `RECORD_LOCKED`、`DEFINITION_LOCKED`、`INVALID_STATE`、`IDEMPOTENCY_KEY_MISMATCH` | 相同 key 但 request body 不同 |
+| 422 | `RECORD_LOCKED`、`DEFINITION_LOCKED`、`INVALID_STATE`、`IDEMPOTENCY_KEY_MISMATCH`；2026-10-02：`EMAIL_NOT_VERIFIED`、`NO_EMAIL`、`EMAIL_NOT_CONFIGURED`、`VERIFICATION_LINK_INVALID` / `_USED` / `_EXPIRED` | 相同 key 但 request body 不同 |
 | 423 | `ACCOUNT_LOCKED` | |
 | 428 | `IDEMPOTENCY_KEY_REQUIRED` | 病人端的觀察類 POST 沒帶 key |
 | 429 | `RATE_LIMITED` | |
@@ -304,6 +305,11 @@ Response `204`；成功後撤銷其他所有 Refresh Token。
 | `/api/v1/patients/{pid}/nurse-assignments` | GET / POST | 讀：nurse；寫：admin | | nurse_patient_assignments | 1 |
 | `/api/v1/patients/{pid}/nurse-assignments/{id}/end` | POST | admin | 結束指派 | nurse_patient_assignments | 1 |
 | `/api/v1/patients/{pid}/timeline` | GET | 有權者（病人本人、負責護理師、admin） | 照護時間軸（已實作，見下方） | chemotherapy_cycles, medication_records, symptom_records, vital_signs, lab_results, notifications, nursing_assessments | 1 |
+| `/api/v1/patients/{pid}/profile` | GET | 有權者（本人、負責護理師、admin） | 病人基本資料：身高、最新體重、BMI、通知 Email 與驗證狀態（員工只看到遮罩）（已實作，2026-10-02） | patient_profiles, patient_contacts, vital_signs, auth_tokens | 1 |
+| `/api/v1/patients/me/profile` | PATCH | patient（本人） | 病人自行維護：通知 Email、身高、Email 通知開關（已實作） | patient_profiles, patient_contacts, auth_tokens, audit_logs | 1 |
+| `/api/v1/patients/{pid}/weights` | GET | 有權者 | 體重紀錄（`vital_signs.weight_kg`，新到舊；新增體重用 `POST /vital-signs`）（已實作） | vital_signs | 1 |
+| `/api/v1/patients/me/email-verification` | POST | patient（本人） | 寄出一次性驗證連結（已實作） | auth_tokens, audit_logs | 1 |
+| `/api/v1/patients/me/email-verification/confirm` | POST | patient（本人） | `{token}` 完成驗證（已實作） | auth_tokens, patient_contacts, audit_logs | 1 |
 | `/api/v1/patients/{pid}/contacts` | GET / PUT | 主責 nurse, admin | | patient_contacts | 2 |
 | `/api/v1/patients/{pid}/consents` | GET / POST | nurse, admin | | patient_consents | 2 |
 | `/api/v1/patients/{pid}/clinical-events` | GET / POST | nurse | | clinical_events | 2 |
@@ -463,6 +469,15 @@ Response `200`
 ```
 
 ---
+
+> **實作說明（病人基本資料 + Email 通知，2026-10-02）**
+> - **路由**：`GET /patients/{pid|me}/profile`（patient：本人；nurse：目前指派的病人；admin：全部；其他一律 `404`）。`PATCH /patients/{pid|me}/profile` 只限 patient 角色（nurse / admin `403`；別的病人 `404`）。沒有 `/me/profile`。
+> - **Response**（`data`，所有角色同一形狀）：`patient_id`、`patient_code`、`display_name`、`height_cm`、`latest_weight`（`{id, weight_kg, measured_at, source, entered_by_patient}`，員工另有 `recorded_by`）、`bmi`、`email`（**員工一律 `null`**）、`email_masked`（`p***@example.com`）、`email_verified`、`email_verified_at`、`email_notification_enabled`、`email_verification_sent_at`（本人、尚未驗證且有有效連結時）、`email_delivery_available`（沒有設定 Email 服務時為 `false`）。員工的 `GET /patients/{pid}` 另有 `notification_contact: {email_masked, email_verified, email_notification_enabled}`；病人本人的 `GET /patients/me` 不變。
+> - **PATCH body**：只接受 `email`（`null` / 空字串 = 移除；trim + 小寫）、`height_cm`（30–250）、`email_notification_enabled`（boolean）；其他欄位 `400`（姓名、過敏等仍由護理師以 `PATCH /patients/{pid}` 維護；護理師的 `PATCH /patients/{pid}` 不接受 `email`，`400`）。**更換 Email**：清除驗證、`email_notification_enabled` 改為 `false`、已寄出的驗證連結失效。**開啟 Email 通知**需要已驗證的 Email，否則 `422 EMAIL_NOT_VERIFIED`（整個請求不寫入）。通知 Email 與登入帳號 `users.email` 無關，登入帳號不會改變。
+> - **體重**：沿用 `POST /vital-signs`（`{patient_id: "me", weight_kg}`，病人必須帶 `Idempotency-Key`）；病人輸入 `source = patient_app`、`recorded_by` = 病人帳號，稽核 `CREATE vital_signs` 的 actor 為病人。歷史保留（append-only，更正走既有 amend / mark-error）。`GET /patients/{pid}/weights?limit=1–100`（預設 30）：final 且有體重的紀錄，新到舊；病人看不到 `recorded_by`。病人輸入的體重會被既有 Risk Engine（7 天體重變化 ≤ −3% → medium）讀取，Risk Engine 與門檻都沒有修改。
+> - **BMI**：最新 final 體重 ÷（身高 m）²，四捨五入（half up）到小數 1 位；缺身高或體重為 `null`；不存 DB。
+> - **Email 驗證**：`POST /patients/me/email-verification` → `200 {delivery: {status: sent|failed, error_code}, profile}`；寄出 `<APP_BASE_URL>/patient/verify-email#token=…`（token 在 URL fragment，不會進入伺服器 log / Referer），24 小時有效、只能用一次，重寄或更換 Email 後舊連結失效。沒有 Email → `422 NO_EMAIL`；已驗證 → `409`；60 秒內重寄 → `429 RATE_LIMITED`；沒有 Email 服務（`EMAIL_PROVIDER=disabled`）→ `422 EMAIL_NOT_CONFIGURED`。`POST /patients/me/email-verification/confirm {token}`：必須是收到連結的病人本人登入（別人的連結 `422`）；`VERIFICATION_LINK_INVALID`（不存在 / 已被取代）、`_USED`、`_EXPIRED` 皆為 `422`（不使用 `401` / `TOKEN_EXPIRED`，避免觸發前端 refresh）。驗證成功後 Email 通知仍為關閉，由病人自行開啟。
+> - **稽核**：`UPDATE patient_profiles` / `UPDATE patient_contacts`（只記欄位名稱，`by: patient`；更換 Email 另記 `email_verification_reset: true`）、`email_verification_requested`、`email_verified`；**不記錄** Email 地址、驗證連結 / token、Email 內容。員工讀取 profile 記 `VIEW patient_profile`。
 
 ## 5. Chemotherapy API（含 Treatment Schedule）
 
@@ -1416,7 +1431,9 @@ Request
 ```
 Response `201`：回傳通知物件（收件者為病人帳號）。
 
-> **實作說明（Sprint 8）**：`POST /notifications`（nurse：目前指派的病人，否則 `404`；admin：全部），Body `{patient_id, title (≤200), message (≤2000), severity?: info|warning（critical 保留給風險警示）, scheduled_for?}`；`type` 只能是 `reminder`；`scheduled_for` 需為含時區的 ISO 8601，1 分鐘後到 1 年內（省略 = 立即送出）；病人沒有登入帳號回 `422 NO_PATIENT_ACCOUNT`；可帶 `Idempotency-Key`（重送同一內容回同一筆，不同內容 `422`）。一筆通知、收件者為病人帳號、獨立 `event_key`（`reminder:<uuid>`），`status = new`。**與風險警示相同的處理流程**：`POST /notifications/{id}/acknowledge|start|resolve`（`new → acknowledged → in_progress → resolved`，順序不符 `409`；病人 `403`）；快速結案 `PATCH /notifications/{id}/resolve` 仍只限風險警示。員工清單：`GET /notifications?type=reminder&patient_id=…`（`status` 篩選與 `meta.counts` 依 `type` 計算；未帶 `type` 時仍只列風險警示，行為不變）。**可見性**：`scheduled_for` 未到之前，病人的清單、詳情、未讀數、全部已讀都看不到（`404`）；員工以 `GET /notifications/scheduled?patient_id=`（nurse / admin；病人 `403`）查看尚未送出的提醒（`id, event_key, type, origin, severity, title, message, scheduled_for, created_at, patient`），到時間後移到一般清單。每筆通知新增 `origin`（**衍生欄位，無 schema 變更**）：`alert_rule`（風險規則產生）/ `scheduled`（指定時間送出，或由紀錄產生，例如行程提醒）/ `manual`（立即送出）；需求中的 `source = manual / scheduled / alert_rule` 以 `origin` 表示，因為 `source` 已是觸發紀錄 `{table, id}`。另新增 `scheduled_for`。員工看到提醒的 `status` / `status_text` / `handling`；病人端的提醒仍不含處理流程、處理者與內部說明。稽核：`CREATE notifications`（`type, origin, event_key, severity, title, scheduled_for`）；處理步驟沿用 `ACKNOWLEDGE` / `UPDATE notifications`。照護時間軸不變（仍只含風險警示，7 種 event type 不變）。**Known limitation**：尚未送出的排程提醒不能取消或修改（需要新欄位，例如 `cancelled_at`，設計文件未規劃）；排程由查詢時比較 `scheduled_for` 達成，沒有背景工作與推播。
+> **實作說明（Sprint 8）**：`POST /notifications`（nurse：目前指派的病人，否則 `404`；admin：全部），Body `{patient_id, title (≤200), message (≤2000), severity?: info|warning（critical 保留給風險警示）, scheduled_for?}`；`type` 只能是 `reminder`；`scheduled_for` 需為含時區的 ISO 8601，1 分鐘後到 1 年內（省略 = 立即送出）；病人沒有登入帳號回 `422 NO_PATIENT_ACCOUNT`；可帶 `Idempotency-Key`（重送同一內容回同一筆，不同內容 `422`）。一筆通知、收件者為病人帳號、獨立 `event_key`（`reminder:<uuid>`），`status = new`。**與風險警示相同的處理流程**：`POST /notifications/{id}/acknowledge|start|resolve`（`new → acknowledged → in_progress → resolved`，順序不符 `409`；病人 `403`）；快速結案 `PATCH /notifications/{id}/resolve` 仍只限風險警示。員工清單：`GET /notifications?type=reminder&patient_id=…`（`status` 篩選與 `meta.counts` 依 `type` 計算；未帶 `type` 時仍只列風險警示，行為不變）。**可見性**：`scheduled_for` 未到之前，病人的清單、詳情、未讀數、全部已讀都看不到（`404`）；員工以 `GET /notifications/scheduled?patient_id=`（nurse / admin；病人 `403`）查看尚未送出的提醒（`id, event_key, type, origin, severity, title, message, scheduled_for, created_at, patient`），到時間後移到一般清單。每筆通知新增 `origin`（**衍生欄位，無 schema 變更**）：`alert_rule`（風險規則產生）/ `scheduled`（指定時間送出，或由紀錄產生，例如行程提醒）/ `manual`（立即送出）；需求中的 `source = manual / scheduled / alert_rule` 以 `origin` 表示，因為 `source` 已是觸發紀錄 `{table, id}`。另新增 `scheduled_for`。員工看到提醒的 `status` / `status_text` / `handling`；病人端的提醒仍不含處理流程、處理者與內部說明。稽核：`CREATE notifications`（`type, origin, event_key, severity, title, scheduled_for`）；處理步驟沿用 `ACKNOWLEDGE` / `UPDATE notifications`。照護時間軸不變（仍只含風險警示，7 種 event type 不變）。
+
+> **實作說明（Email 通知管道，2026-10-02）**：`POST /notifications` 的 request 不變。流程：同一個 transaction 建立通知（`status = new`）、規劃一筆 `notification_deliveries`（`pending`，或 `skipped` + `skip_reason`）與稽核並 commit；**commit 之後**才同步呼叫 EmailService 寄出（timeout `EMAIL_TIMEOUT_SECONDS`，預設 10 秒），結果另外 commit 為 `sent` / `failed`（`error_code`：`TIMEOUT` / `PROVIDER_REJECTED` / `PROVIDER_ERROR`）。**Email 失敗、逾時或例外都不會讓請求失敗（仍為 `201`），也不會 rollback 或改變通知與其處理流程**。寄送條件：病人的通知 Email 已驗證 **且** 開啟 Email 通知；否則 `skipped`：`no_email` / `not_verified` / `disabled`；排程提醒（`scheduled_for` 在未來）一律 `skipped / scheduled`（沒有背景排程，不寄）；沒有 Email 服務 `skipped / not_configured`。風險警示不寄 Email。Idempotency replay 不會重寄。Email 內容只有摘要：系統名稱、「您有一則來自護理團隊的新通知」、發送時間、請登入 App / 網頁查看、安全提醒——**不含通知標題與內容**、病人代碼、任何 id 或 token。員工的通知 payload（列表、詳情、`/scheduled`、建立回應）新增 `email_delivery: {channel, status, skip_reason, error_code, recipient_masked, attempted_at, completed_at}`（沒有 Email 管道的通知為 `null`）；病人的 payload 不含此欄位。稽核：`CREATE notifications` 增加 `email_delivery: {status, skip_reason}`；寄送結果 `UPDATE notification_deliveries`（`notification_id, channel, status, error_code`）。照護時間軸不變（寄送不是時間軸事件）。**Known limitation**：尚未送出的排程提醒不能取消或修改（需要新欄位，例如 `cancelled_at`，設計文件未規劃）；排程由查詢時比較 `scheduled_for` 達成，沒有背景工作與推播。
 
 ### POST `/api/v1/notifications/alert-rules`
 

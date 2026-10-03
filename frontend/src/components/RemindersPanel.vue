@@ -8,12 +8,16 @@ import { formatTime, localDate } from '@/utils/format'
  * 提醒 (staff): write a reminder to the patient, sent now or at a set time. The patient sees it in
  * 通知 once it is due; until then only staff see it under 排程中. Sent reminders follow the same
  * handling steps as risk alerts (接手 → 開始處理 → 完成); the completion note stays internal.
+ * Email channel: when the patient has a verified contact email with email notifications on, a
+ * summary email (no content) goes out too; its outcome is shown per reminder and never changes the
+ * reminder's own status.
  */
 const props = defineProps({
   patientId: { type: String, required: true },
   canWrite: { type: Boolean, default: false },
   hasAccount: { type: Boolean, default: true },
   timezone: { type: String, default: 'Asia/Taipei' },
+  emailContact: { type: Object, default: null }, // patient.notification_contact (masked email, verified, enabled)
 })
 
 const store = useRemindersStore()
@@ -21,6 +25,26 @@ const STATUS = { new: '待處理', acknowledged: '已接手', in_progress: '處�
 const STATUS_CLASS = { new: 'bg-warn-soft text-warn', acknowledged: 'bg-care-soft text-care', in_progress: 'bg-care-soft text-care', resolved: 'bg-ok-soft text-ok' }
 const ORIGIN = { manual: '立即送出', scheduled: '排程送出', alert_rule: '風險規則' }
 const NEXT = { new: ['acknowledge', '接手'], acknowledged: ['start', '開始處理'], in_progress: ['resolve', '完成'] }
+const EMAIL_STATUS = { sent: 'Email 已寄出', failed: 'Email 寄送失敗', pending: 'Email 寄送中', skipped: 'Email 未寄' }
+const EMAIL_CLASS = { sent: 'bg-ok-soft text-ok', failed: 'bg-critical-soft text-critical', pending: 'bg-care-soft text-care', skipped: 'bg-mist text-ink-soft' }
+const SKIP = {
+  no_email: '病人未設定 Email', not_verified: '病人 Email 尚未驗證', disabled: '病人未開啟 Email 通知',
+  scheduled: '排程提醒不寄 Email', not_configured: '系統尚未設定 Email 服務',
+}
+const ERROR = { TIMEOUT: '逾時', PROVIDER_REJECTED: '寄送服務拒收', PROVIDER_ERROR: '寄送服務錯誤' }
+function emailText(d) {
+  if (!d) return ''
+  if (d.status === 'skipped') return `${EMAIL_STATUS.skipped}（${SKIP[d.skip_reason] ?? d.skip_reason}）`
+  if (d.status === 'failed') return `${EMAIL_STATUS.failed}（${ERROR[d.error_code] ?? d.error_code}，App 通知已送出）`
+  return EMAIL_STATUS[d.status] ?? d.status
+}
+const emailChannel = computed(() => {
+  const c = props.emailContact
+  if (!c?.email_masked) return '病人未設定通知 Email：只會送 App 通知。'
+  if (!c.email_verified) return `病人的 Email（${c.email_masked}）尚未驗證：只會送 App 通知。`
+  if (!c.email_notification_enabled) return `病人未開啟 Email 通知（${c.email_masked}）：只會送 App 通知。`
+  return `病人已開啟 Email 通知（${c.email_masked}）：立即送出的通知會同時寄出 Email 摘要（不含內容）。`
+})
 
 const sent = computed(() => store.sent[props.patientId] ?? null)
 const scheduled = computed(() => store.scheduled[props.patientId] ?? [])
@@ -54,7 +78,8 @@ async function submit() {
     const payload = { title: form.title.trim(), message: form.message.trim(), severity: form.severity,
       ...(form.timing === 'later' ? { scheduled_for: toIso(form.at) } : {}) }
     const r = await store.create(props.patientId, payload, key)
-    notice.value = r.scheduled_for ? `已排定，將於 ${when(r.scheduled_for)} 送出` : '已送出，病人可在「通知」看到'
+    const email = r.email_delivery ? `；${emailText(r.email_delivery)}` : ''
+    notice.value = (r.scheduled_for ? `已排定，將於 ${when(r.scheduled_for)} 送出` : '已送出，病人可在「通知」看到') + email
     Object.assign(form, { open: false, ...blank() })
     key = crypto.randomUUID()
   } catch (e) {
@@ -96,12 +121,13 @@ watch(() => props.patientId, (id) => store.fetch(id))
 <template>
   <section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="reminders-title" data-reminders>
     <div class="flex flex-wrap items-center justify-between gap-2">
-      <h2 id="reminders-title" class="text-lg font-bold">提醒</h2>
+      <h2 id="reminders-title" class="text-lg font-bold">提醒與通知</h2>
       <button v-if="canWrite && hasAccount && !form.open" type="button" class="min-h-10 rounded-full border border-line px-4 text-care hover:bg-care-soft" data-new-reminder @click="form.open = true; notice = ''">
-        寫提醒
+        發送通知
       </button>
     </div>
     <p class="text-sm text-ink-soft">病人會在「通知」看到提醒；排定時間的提醒到時間才會出現。</p>
+    <p v-if="canWrite && hasAccount" class="mt-1 text-sm text-ink-soft" data-email-channel>{{ emailChannel }}</p>
     <p v-if="canWrite && !hasAccount" class="mt-2 text-sm text-warn">這位病人尚未開通登入帳號，還不能收到提醒。</p>
     <p v-if="notice" class="mt-3 rounded-xl bg-care-soft px-4 py-3 text-care" role="status" data-reminder-notice>{{ notice }}</p>
     <p v-if="failure" class="mt-3 rounded-xl bg-critical-soft px-4 py-3 text-critical" role="alert" data-reminder-error>{{ failure }}</p>
@@ -146,7 +172,7 @@ watch(() => props.patientId, (id) => store.fetch(id))
         <ul class="mt-2 divide-y divide-line rounded-xl border border-dashed border-line" data-scheduled-list>
           <li v-for="r in scheduled" :key="r.id" class="px-4 py-3" :data-scheduled="r.id">
             <p class="font-medium">{{ r.title }}</p>
-            <p class="text-sm text-ink-soft">將於 {{ when(r.scheduled_for) }} 送出</p>
+            <p class="text-sm text-ink-soft">將於 {{ when(r.scheduled_for) }} 送出<template v-if="r.email_delivery">（{{ emailText(r.email_delivery) }}）</template></p>
           </li>
         </ul>
       </div>
@@ -164,6 +190,9 @@ watch(() => props.patientId, (id) => store.fetch(id))
                 </p>
                 <p class="text-sm break-words text-ink-soft">{{ r.message }}</p>
                 <p class="text-sm text-ink-soft">{{ ORIGIN[r.origin] ?? r.origin }}，{{ when(r.scheduled_for ?? r.created_at) }}</p>
+                <p v-if="r.email_delivery" class="mt-1 text-sm" data-email-delivery :data-email-status="r.email_delivery.status">
+                  <span class="rounded-full px-2 py-0.5" :class="EMAIL_CLASS[r.email_delivery.status]">{{ emailText(r.email_delivery) }}</span>
+                </p>
                 <p v-if="r.handling?.resolution_note" class="text-sm text-ink-soft">處理說明（內部）：{{ r.handling.resolution_note }}</p>
               </div>
               <button v-if="canWrite && NEXT[r.status]" type="button" class="min-h-11 shrink-0 rounded-full border border-line px-4 hover:bg-mist" :data-step="NEXT[r.status][0]" @click="step(r, NEXT[r.status][0])">

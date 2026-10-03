@@ -120,7 +120,8 @@ const originOf = (n) => n.origin ?? (n.type === 'risk_alert' ? 'alert_rule' : 's
 /** API payload for the nurse (staff view). */
 function view(n) {
   const { _detail, delivered, ...rest } = n // eslint-disable-line no-unused-vars -- internal mock flags
-  const out = { ...clone(rest), origin: originOf(n), scheduled_for: n.scheduled_for ?? null }
+  // email_delivery: email channel of staff-sent reminders (separate from the handling status); null otherwise
+  const out = { ...clone(rest), origin: originOf(n), scheduled_for: n.scheduled_for ?? null, email_delivery: clone(n.email_delivery ?? null) }
   if (!LIFECYCLE.includes(n.type)) return { ...out, status: null, status_text: null, handling: null, is_mine: true }
   const mine = n.type === 'risk_alert' // a reminder's recipient is the patient
   return {
@@ -493,6 +494,7 @@ export function mockScheduledReminders(patientId) {
     .sort((a, b) => Date.parse(a.scheduled_for) - Date.parse(b.scheduled_for) || a.id - b.id)
   return {
     data: rows.map((n) => ({ id: n.id, event_key: n.event_key, type: n.type, origin: originOf(n), severity: n.severity, title: n.title,
-      message: n.message, scheduled_for: n.scheduled_for, created_at: n.created_at, patient: clone(n.patient) })),
+      message: n.message, scheduled_for: n.scheduled_for, created_at: n.created_at, patient: clone(n.patient),
+      email_delivery: clone(n.email_delivery ?? null) })),
   }
 }

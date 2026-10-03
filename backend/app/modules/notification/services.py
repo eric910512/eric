@@ -22,6 +22,7 @@ from app.models import LabResult, Notification, NursePatientAssignment, PatientP
 from app.models.base import utcnow
 from app.models.enums import NotificationStatus as S
 from app.models.enums import NotificationType, RoleName
+from app.modules.notification.delivery import delivery_payload, latest_email_delivery
 from app.services.alert_engine import describe_trigger
 from app.services.treatment import active_plan_and_cycle, cycle_nadir
 
@@ -127,6 +128,8 @@ def notification_payload(n, viewer):
         "created_at": iso_utc(n.created_at),
     }
     if staff:
+        # email channel of staff-sent notifications (separate from the handling status); None otherwise
+        data["email_delivery"] = delivery_payload(latest_email_delivery(n))
         # Deprecated (pre-lifecycle clients): the resolution, formerly called "acknowledged".
         data["acknowledged"] = (
             {"by": _person(n.resolver), "at": iso_utc(n.resolved_at), "resolution_note": n.resolution_note}

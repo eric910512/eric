@@ -293,6 +293,8 @@ def patient_detail(patient, viewer):
         "current_cycle": _current_cycle(patient),
     }
     if staff:  # internal: care team, account state, provenance
+        from app.modules.patient.profile import contact_summary  # local: profile imports this module
+
         account = patient.user
         data.update({
             "care_team": _care_team(patient),
@@ -303,6 +305,8 @@ def patient_detail(patient, viewer):
                 "must_change_password": account.password_changed_at is None if account else None,
                 "last_login_at": iso_utc(account.last_login_at) if account else None,
             },
+            # the patient's own contact email (not the login): masked, verification and notification state only
+            "notification_contact": contact_summary(patient),
             "created_at": iso_utc(patient.created_at),
             "created_by": _person(db.session.get(User, patient.created_by)) if patient.created_by else None,
         })

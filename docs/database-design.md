@@ -1,20 +1,25 @@
 # Cancer Care Platform — Database Design (v3.1)
 
 > 狀態：設計文件；Phase 1 資料表與部分 Phase 2 資料表已實作（見「實作狀態」）
-> 更新日期：2026-09-25（Stabilization Sprint 同步）
+> 更新日期：2026-10-02（病人基本資料 + Email 通知 sprint 同步）
 > 目標資料庫：開發 SQLite / 正式 PostgreSQL（僅使用兩者皆支援之型別）
 > 相關文件：`docs/api-design.md`（v1.1）、`docs/ui-architecture.md`（v1）
 
-## 實作狀態（2026-09-25）
+## 實作狀態（2026-10-02）
 
 本文件是完整設計（Phase 1–4）。目前實際存在於 SQLAlchemy Model 與 migration 的只有下列資料表；其餘為設計，尚未實作。
 
-- **Migration**（`backend/migrations/versions/`，依序）：`239714d451b1` 初始 Phase 1 schema → `9253ef8ff76f` 檢驗（`lab_test_types`、`lab_results`、`alert_rules.lab_test_type_id`）→ `ea84e6940c21` 通知處理流程（`notifications.status`、`started_*`、`resolved_*`，`alert_rules.recommended_action`）。
-- **已實作（34 張）**：`roles`、`users`、`auth_tokens`、`nurse_profiles`、`patient_profiles`、`patient_care_alerts`、`nurse_patient_assignments`、`cancer_types`、`cancer_diagnoses`、`drugs`、`chemo_regimens`、`regimen_drugs`、`chemotherapy_plans`、`chemotherapy_cycles`、`medication_records`、`appointments`、`appointment_instructions`、`symptom_categories`、`symptom_definitions`、`symptom_definition_options`、`symptom_forms`、`symptom_form_items`、`symptom_records`、`symptom_record_values`、`symptom_record_value_options`、`vital_signs`、`nursing_assessments`、`nursing_assessment_items`、`alert_rules`、`notifications`、`lab_test_types`、`lab_results`、`audit_logs`、`idempotency_records`。
-- **設計中、尚未實作（22 張）**：`permissions`、`role_permissions`、`patient_contacts`、`patient_consents`、`clinical_events`、`symptom_form_schedules`、`symptom_form_targets`、`education_categories`、`education_materials`、`material_cancer_types`、`patient_education_assignments`、`dashboard_widgets`、`dashboard_widget_roles`、`dashboard_layouts`、`dashboard_layout_items`、`institution_settings`、`data_export_requests`、`patient_daily_features`、`ai_datasets`、`ai_models`、`ai_predictions`、`ai_prediction_feedback`。
+- **Migration**（`backend/migrations/versions/`，依序）：`239714d451b1` 初始 Phase 1 schema → `9253ef8ff76f` 檢驗（`lab_test_types`、`lab_results`、`alert_rules.lab_test_type_id`）→ `ea84e6940c21` 通知處理流程（`notifications.status`、`started_*`、`resolved_*`，`alert_rules.recommended_action`）→ `8c6b981c2152` 病人聯絡 Email 與通知寄送紀錄（`patient_contacts`、`notification_deliveries`）。
+- **已實作（36 張）**：`roles`、`users`、`auth_tokens`、`nurse_profiles`、`patient_profiles`、`patient_care_alerts`、`nurse_patient_assignments`、`cancer_types`、`cancer_diagnoses`、`drugs`、`chemo_regimens`、`regimen_drugs`、`chemotherapy_plans`、`chemotherapy_cycles`、`medication_records`、`appointments`、`appointment_instructions`、`symptom_categories`、`symptom_definitions`、`symptom_definition_options`、`symptom_forms`、`symptom_form_items`、`symptom_records`、`symptom_record_values`、`symptom_record_value_options`、`vital_signs`、`nursing_assessments`、`nursing_assessment_items`、`alert_rules`、`notifications`、`lab_test_types`、`lab_results`、`audit_logs`、`idempotency_records`、`patient_contacts`（部分欄位，見下）、`notification_deliveries`。
+- **設計中、尚未實作（21 張）**：`permissions`、`role_permissions`、`patient_consents`、`clinical_events`、`symptom_form_schedules`、`symptom_form_targets`、`education_categories`、`education_materials`、`material_cancer_types`、`patient_education_assignments`、`dashboard_widgets`、`dashboard_widget_roles`、`dashboard_layouts`、`dashboard_layout_items`、`institution_settings`、`data_export_requests`、`patient_daily_features`、`ai_datasets`、`ai_models`、`ai_predictions`、`ai_prediction_feedback`。
 - **Sprint 7（管理者後台）**：無 schema 變更。沿用 `users.is_active` / `locked_until` / `failed_login_count`（帳號狀態）、`alert_rules`（管理者可改門檻、等級、啟用；`code` / `source_type` / 對象不可改）、`symptom_forms.version` + `symptom_form_items`（題目順序與必填，`version` +1；`symptom_definitions` 不修改）、`audit_logs`（查詢）。既有 `symptom_records` 保留當時的 `form_version`，不重算；既有 `notifications` 不因規則變更而重算。`institution_settings` 仍為設計（設定來自設定檔，唯讀）。
 - **Sprint 8（手動 / 排程提醒）**：無 schema 變更。提醒為 `notifications`（`type = reminder`、`recipient_id` = 病人帳號、`event_key = reminder:<uuid>`、`status` 走同一處理流程）；`scheduled_for` 未到前不顯示給病人；`origin`（manual / scheduled / alert_rule）由 `alert_rule_id`、`scheduled_for`、`source_table` 推得，不存欄位；建立者記錄在 `audit_logs`（`CREATE notifications`）。取消排程提醒需新欄位（未規劃）→ 未實作。
 - **Authentication Hardening**：無 schema 變更。`auth_tokens` 依設計使用：一次登入 = 一個 `family_id`（session），`token_type = refresh`，只存 `token_hash`（SHA-256），`expires_at` 14 天，`ip_address` / `user_agent` 記錄登入裝置；撤銷 = 設定該 family 所有列的 `revoked_at`。access token 的 `sid` claim 對應 `family_id`。`token_type = password_reset` 尚未使用（公開的密碼重設需要寄送管道）。Refresh（`POST /auth/refresh`）：出示的列標記 `used_at`，同一 `family_id` 新增一列（`expires_at` 沿用，session 最長 14 天）；已標記 `used_at` 的列再次出現 → 整個 family `revoked_at`。原始 token 只存在 HttpOnly cookie。`auth_tokens.family_id` 目前沒有索引（每次 API 請求會依 `user_id` + `family_id` 查詢；資料量大時建議新增索引 migration）。
+- **病人基本資料 + Email 通知（2026-10-02）**：migration `8c6b981c2152`，只新增兩張表，不修改既有資料表。
+  - `patient_contacts`（Phase 2 表提前建立，**只建 Email 相關欄位**：`email`、`email_verified_at`、`email_notification_enabled`；`phone` / `address` / 病歷號 / 緊急聯絡人仍為 Phase 2）。這是病人自己維護的**通知 Email，與登入帳號 `users.email` 分開**（`users.email` 不因此修改）。`email_verified` 由 `email_verified_at` 推得，不另存欄位。
+  - `notification_deliveries`（新表，原設計沒有）：通知經外部管道（Phase 1：email）寄送的紀錄，有自己的 `status`（`pending` / `sent` / `failed` / `skipped`），**與 `notifications.status` 處理流程完全分開**。
+  - Email 驗證連結使用既有 `auth_tokens`（`token_type = email_verification`、只存雜湊、24 小時、`used_at` 一次性；更換 Email 或重寄時舊的列設定 `revoked_at`），無 schema 變更。
+  - 身高沿用 `patient_profiles.height_cm`；體重沿用 `vital_signs.weight_kg`（病人自行輸入：`source = patient_app`、`recorded_by` = 病人帳號，append-only 保留歷史）；**BMI 不存 DB**（最新體重 ÷ 身高² 即時計算）。
 - 一致性：`flask --app run db check` 無差異；由 migration 建立的資料庫與 `db.create_all()` 逐欄比對（欄位、預設值、索引、唯一鍵、外鍵）完全相同。
 
 ## 變更摘要（v3 → v3.1）
@@ -34,9 +39,9 @@
 
 ---
 
-## 1. 分期總覽（56 張）
+## 1. 分期總覽（57 張）
 
-### Phase 1 MVP（32 張）
+### Phase 1 MVP（33 張）
 
 | 決策項目 | 領域 | Tables | 數量 |
 |---|---|---|---|
@@ -50,7 +55,7 @@
 | Symptom Record | H 症狀紀錄 | symptom_records, symptom_record_values, symptom_record_value_options | 3 |
 | Vital Signs | I 生命徵象 | vital_signs | 1 |
 | Nursing Assessment | J 護理評估 | nursing_assessments, nursing_assessment_items | 2 |
-| Notification | K 通知 | alert_rules, notifications | 2 |
+| Notification | K 通知 | alert_rules, notifications, notification_deliveries（2026-10-02 新增） | 3 |
 
 > Chemotherapy Cycle 必須有上層的 `chemotherapy_plans`，Medication Record 必須有 `drugs`；`chemo_regimens` / `regimen_drugs` 是產生 Cycle 排程（週期天數）與致吐風險的參考資料，所以一起放在 Phase 1。
 
@@ -61,7 +66,7 @@
 | Education Material | L 衛教 | education_categories, education_materials, material_cancer_types, patient_education_assignments | 4 |
 | Questionnaire Scheduling | M 問卷排程 | symptom_form_schedules, symptom_form_targets | 2 |
 | Advanced Dashboard Configuration | N Dashboard 配置 | dashboard_widgets, dashboard_widget_roles, dashboard_layouts, dashboard_layout_items | 4 |
-| （沿用 v3 Phase 2） | O 臨床擴充 | patient_contacts, patient_consents, lab_test_types, lab_results, clinical_events | 5 |
+| （沿用 v3 Phase 2） | O 臨床擴充 | patient_contacts（Email 欄位已提前實作）, patient_consents, lab_test_types, lab_results, clinical_events | 5 |
 
 ### Phase 3 機構設定與進階管理（4 張）
 
@@ -115,6 +120,7 @@
 | 直接識別資料隔離 | 電話、地址、緊急聯絡人、病歷號放在 Phase 2 `patient_contacts` |
 | Demo 標記 | `patient_profiles.is_demo` |
 | Demo 帳號 | 使用 `@demo.local` 等不可投遞網域 |
+| 通知 Email（2026-10-02） | 病人自行填寫的通知 Email 存在 `patient_contacts`（與登入帳號 `users.email` 分開、與 `patient_profiles` 隔離）；必須驗證後且病人開啟 Email 通知才寄信。護理師 / 管理者只看到遮罩（`j***@example.com`）；`audit_logs` 只記欄位名稱，`notification_deliveries` 只存遮罩後地址。Email 只寄**摘要**（「您有一則來自護理團隊的新通知」），不含通知標題與內容。正式 Email 服務尚未設定（`EMAIL_PROVIDER=disabled`）：不寄任何信 |
 | Idempotency | `idempotency_records` **不存 response body**，只存資源指標，避免複製一份醫療資料 |
 | AI 資料集 | 只引用 `patient_id` / `patient_code`；正式資料需有 `patient_consents` 同意紀錄 |
 
@@ -286,7 +292,7 @@ erDiagram
 |---|---|---|---|
 | id | INTEGER | **PK** | |
 | user_id | INTEGER | **FK → users.id**, NOT NULL, CASCADE | |
-| token_type | VARCHAR(20) | NOT NULL | `refresh` / `password_reset` |
+| token_type | VARCHAR(20) | NOT NULL | `refresh` / `password_reset` / `email_verification`（通知 Email 驗證連結，2026-10-02） |
 | token_hash | VARCHAR(255) | UQ, NOT NULL | |
 | family_id | CHAR(36) | NOT NULL | 同一登入階段的 refresh token 屬於同一個 family；偵測到重複使用時整個 family 撤銷 |
 | expires_at | DATETIME | NOT NULL | |
@@ -825,6 +831,25 @@ erDiagram
 
 > **實作狀態**：處理流程欄位（`status`、`started_*`、`resolved_*`）由 Notification Workflow sprint 新增（migration `ea84e6940c21`）。升級前 `acknowledged_at` 有值代表「已處理」，升級時回填為 `resolved`，並把 `acknowledged_*` 複製到 `started_*` / `resolved_*`；升級後 `acknowledged_*` 只代表「接手」。狀態轉換的歷程記在 `audit_logs`。
 
+
+#### `notification_deliveries`（2026-10-02 新增，已實作）
+通知經外部管道寄送的紀錄（Phase 1 只有 email）。**與 `notifications.status` 分開**：Email 失敗不會改變、也不會 rollback 通知；Email 不是第二套狀態機。只有護理師 / 管理者建立的提醒（`POST /notifications`）會規劃 Email；風險警示不寄 Email。
+
+| 欄位 | 型別 | 約束 | 說明 |
+|---|---|---|---|
+| id | INTEGER | **PK** | |
+| notification_id | INTEGER | **FK → notifications.id**, NOT NULL, CASCADE | 附屬明細 |
+| channel | VARCHAR(20) | NOT NULL | `email` |
+| status | VARCHAR(20) | NOT NULL, 預設 `pending` | `pending`（已規劃、尚未完成；寄送途中程式中斷會停在此狀態）/ `sent` / `failed` / `skipped` |
+| skip_reason | VARCHAR(30) | | `scheduled`（排程提醒不寄）/ `not_configured`（沒有 Email 服務）/ `no_email` / `not_verified` / `disabled`（病人關閉 Email 通知） |
+| provider | VARCHAR(30) | | `disabled` / `capture`（開發測試）/ 未來的正式服務 |
+| provider_message_id | VARCHAR(255) | | |
+| error_code | VARCHAR(50) | | 系統自訂代碼：`TIMEOUT` / `PROVIDER_REJECTED` / `PROVIDER_ERROR`（不存服務商原始回應） |
+| recipient_masked | VARCHAR(255) | | 遮罩後地址（不另存完整 Email） |
+| attempted_at / completed_at | DATETIME | | |
+| created_at / updated_at | DATETIME | | |
+
+**Index**：`(notification_id)`、`(status, created_at)`
 ---
 
 ## 7. Phase 2 Extension — 欄位設計
@@ -974,6 +999,11 @@ Phase 2 將 Phase 1 程式內定義的版面搬進 DB，並開放護理師拖拉
 | phone | VARCHAR(30) | | 可應用層加密 |
 | address | VARCHAR(255) | | 可應用層加密 |
 | emergency_contact_name / phone / relation | VARCHAR | | |
+| email | VARCHAR(255) | NULL 可 | **已實作（2026-10-02）**：病人自行維護的通知 Email（不是登入帳號），不設 UQ |
+| email_verified_at | DATETIME | NULL 可 | **已實作**：驗證完成時間；更換 Email 時清空 |
+| email_notification_enabled | BOOLEAN | NOT NULL，預設 false | **已實作**：只有已驗證時才能為 true；更換 Email 時改回 false |
+
+> **實作狀態**：migration `8c6b981c2152` 只建立 `id`、`patient_id`（UQ、RESTRICT）、`email`、`email_verified_at`、`email_notification_enabled`、`created_at` / `updated_at`；其餘欄位 Phase 2 再以 migration 新增。
 
 #### `patient_consents`
 | 欄位 | 型別 | 約束 | 說明 |
@@ -1215,6 +1245,7 @@ Phase 2 將 Phase 1 程式內定義的版面搬進 DB，並開放護理師拖拉
 | 1 | nursing_assessment_items.assessment_id | nursing_assessments | CASCADE |
 | 1 | alert_rules.symptom_definition_id / cancer_type_id | symptom_definitions / cancer_types | RESTRICT |
 | 1 | notifications.recipient_id / patient_id / alert_rule_id | users / patient_profiles / alert_rules | CASCADE / SET NULL / SET NULL |
+| 1 | notification_deliveries.notification_id（2026-10-02） | notifications | CASCADE |
 | 1 | 觀察類表.amends_id | 本表 | RESTRICT |
 | 1 | 各表 created_by / recorded_by / reported_by / reviewed_by / administered_by / acknowledged_by | users | RESTRICT |
 | 2 | education_materials.category_id / related_symptom_definition_id / related_drug_id | … | SET NULL |
@@ -1222,7 +1253,7 @@ Phase 2 將 Phase 1 程式內定義的版面搬進 DB，並開放護理師拖拉
 | 2 | symptom_form_schedules.form_id、symptom_form_targets.* | symptom_forms / cancer_types / chemo_regimens | CASCADE |
 | 2 | dashboard_widget_roles.*、dashboard_layouts.role_id / regimen_id / user_id、dashboard_layout_items.layout_id | … | CASCADE |
 | 2 | dashboard_layout_items.widget_id | dashboard_widgets | RESTRICT |
-| 2 | patient_contacts.patient_id、patient_consents.patient_id | patient_profiles | RESTRICT |
+| 2 | patient_contacts.patient_id（已提前實作）、patient_consents.patient_id | patient_profiles | RESTRICT |
 | 2 | lab_results.patient_id / lab_test_type_id / cycle_id | patient_profiles / lab_test_types / chemotherapy_cycles | RESTRICT / RESTRICT / SET NULL |
 | 2 | clinical_events.patient_id / related_symptom_definition_id / cycle_id | … | RESTRICT / RESTRICT / SET NULL |
 | 2 | **alert_rules.lab_test_type_id**（ALTER 新增） | lab_test_types | RESTRICT |
@@ -1300,7 +1331,7 @@ Dashboard 版面、機構設定、權限三者採用相同模式：**Phase 1 由
 | `symptom` | `/api/v1/symptoms` | symptom_categories, symptom_definitions, symptom_definition_options, symptom_forms, symptom_form_items, symptom_records, symptom_record_values, symptom_record_value_options | symptom_form_schedules, symptom_form_targets, lab_test_types, lab_results | | |
 | `vital_signs` | `/api/v1/vital-signs` | vital_signs | | | |
 | `nursing` | `/api/v1/nursing-assessments` | nursing_assessments, nursing_assessment_items | | | |
-| `notification` | `/api/v1/notifications` | alert_rules, notifications | | | |
+| `notification` | `/api/v1/notifications` | alert_rules, notifications, notification_deliveries | | | |
 | `dashboard` | `/api/v1/dashboard` | （程式內版面） | dashboard_* | | |
 | `education` | `/api/v1/education` | | education_*, material_cancer_types, patient_education_assignments | | |
 | `settings` | `/api/v1/settings` | （設定檔） | | institution_settings | |

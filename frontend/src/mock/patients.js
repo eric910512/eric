@@ -11,6 +11,7 @@
  * mock temporary passwords live only in this tab's memory / sessionStorage.
  */
 import { byTimeDesc, nowIso } from '@/mock/clock'
+import { maskEmail } from '@/mock/email'
 import { nurseOverview } from '@/mock/nurseOverview'
 import { patientDashboards } from '@/mock/patientDashboards'
 import { MOCK_PASSWORD, mockUsers } from '@/mock/users'
@@ -350,6 +351,11 @@ function detail(p, user) {
       account: {
         has_account: !!acct, email: acct?.email ?? null, is_active: acct ? acct.is_active : null,
         must_change_password: acct ? acct.must_change_password : null, last_login_at: acct ? acct.last_login_at : null,
+      },
+      // the patient's own contact email (not the login): masked, verification and notification state only
+      notification_contact: {
+        email_masked: maskEmail(p.contact?.email ?? null), email_verified: !!(p.contact?.email && p.contact?.email_verified_at),
+        email_notification_enabled: !!p.contact?.email_notification_enabled,
       },
       created_at: p.created_at,
       created_by: clone(p.created_by),
@@ -861,6 +867,19 @@ export function mockNurseOverview() {
       meta: { total: rows.length, sort: nurseOverview.caseload.meta.sort, ...Object.fromEntries(RISK_KEYS.map((k) => [k, rows.filter((r) => r.risk_level === k).length])) },
     },
   }
+}
+
+/** The live mock patient row (for `@/mock/profile`, which changes height / contact email); call saveMockCareTeam() after a change. */
+export function mockPatientRecord(patientId) {
+  return state.patients.find((p) => p.id === patientId && !p.deleted) ?? null
+}
+export function saveMockCareTeam() {
+  save()
+}
+/** { id, display_name } of the patient's login account (who entered a patient_app reading). */
+export function mockPatientAccount(patientId) {
+  const p = mockPatientRecord(patientId)
+  return p?.account_email && state.accounts[p.account_email] ? person(state.accounts[p.account_email]) : null
 }
 
 /** Test / demo helper: forget every change (fresh seed). */

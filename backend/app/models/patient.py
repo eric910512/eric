@@ -59,6 +59,7 @@ class PatientProfile(TimestampMixin, SoftDeleteMixin, db.Model):
     care_alerts = relationship("PatientCareAlert", back_populates="patient")
     nurse_assignments = relationship("NursePatientAssignment", back_populates="patient")
     notifications = relationship("Notification", back_populates="patient")
+    contact = relationship("PatientContact", back_populates="patient", uselist=False)
 
     @property
     def active_care_alerts(self):

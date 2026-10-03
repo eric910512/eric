@@ -13,6 +13,7 @@ import * as chemo from '@/mock/chemotherapy'
 import * as labs from '@/mock/labs'
 import * as nursing from '@/mock/nursing'
 import * as recs from '@/mock/records'
+import * as profile from '@/mock/profile'
 import * as reminders from '@/mock/reminders'
 import * as review from '@/mock/nurseReview'
 import { patientDashboards } from '@/mock/patientDashboards'
@@ -119,6 +120,13 @@ const staffOnly = (fn) => (...args) => {
 export const mockScheduledReminders = staffOnly(scoped(review.mockScheduledReminders))
 export const mockListReminders = staffOnly(scoped((patientId, opts = {}) =>
   review.mockListNotifications({ ...opts, patientId, type: 'reminder', visible: mockVisiblePatient })))
+// patient basic data + contact email (profile sprint): reads scoped like every patient handler; writes check the role first (403)
+export const mockGetProfile = profile.mockGetProfile
+export const mockPatientWeights = profile.mockPatientWeights
+export const mockUpdateProfile = profile.mockUpdateProfile
+export const mockRequestEmailVerification = profile.mockRequestEmailVerification
+export const mockConfirmEmailVerification = profile.mockConfirmEmailVerification
+export { mockEmailOutbox } from '@/mock/email'
 export const mockListAbnormal = (opts = {}) => review.mockListAbnormal({ ...opts, visible: mockVisiblePatient })
 export const mockTimeline = scoped(timeline.mockTimeline)
 export const submitMockReport = scoped(symptoms.submitMockReport)

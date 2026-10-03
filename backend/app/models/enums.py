@@ -204,7 +204,8 @@ class Priority:
 class TokenType:
     REFRESH = "refresh"
     PASSWORD_RESET = "password_reset"
-    ALL = (REFRESH, PASSWORD_RESET)
+    EMAIL_VERIFICATION = "email_verification"  # contact email (patient_contacts)
+    ALL = (REFRESH, PASSWORD_RESET, EMAIL_VERIFICATION)
 
 
 class AuditCategory:
@@ -351,3 +352,28 @@ class NotificationType:
     REMINDER = "reminder"
     SYSTEM = "system"
     ALL = (RISK_ALERT, REMINDER, SYSTEM)  # Phase 2 adds "education"; Phase 4 adds "ai_alert"
+
+
+class DeliveryChannel:
+    EMAIL = "email"
+    ALL = (EMAIL,)
+
+
+class DeliveryStatus:
+    """Delivery of one notification over an outside channel (notification_deliveries).
+    Independent of the notification's handling lifecycle (NotificationStatus)."""
+
+    PENDING = "pending"  # planned, not attempted yet (stays pending if the process died mid-send)
+    SENT = "sent"
+    FAILED = "failed"
+    SKIPPED = "skipped"  # not attempted: see DeliverySkipReason
+    ALL = (PENDING, SENT, FAILED, SKIPPED)
+
+
+class DeliverySkipReason:
+    NO_EMAIL = "no_email"
+    NOT_VERIFIED = "not_verified"
+    DISABLED = "disabled"  # the patient switched email notifications off
+    SCHEDULED = "scheduled"  # scheduled reminders are not emailed (no background scheduler)
+    NOT_CONFIGURED = "not_configured"  # no real email provider configured (EMAIL_PROVIDER=disabled)
+    ALL = (NO_EMAIL, NOT_VERIFIED, DISABLED, SCHEDULED, NOT_CONFIGURED)

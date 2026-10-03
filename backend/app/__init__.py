@@ -34,6 +34,9 @@ def _deployment_problems(app):
     for origin in origins:
         if origin == "*" or not (origin.startswith("https://") or _LOCAL_ORIGIN.match(origin)):
             problems.append(f"CORS_ORIGINS entry {origin!r} must be an https:// origin (no '*').")
+    from app.services.email.factory import configuration_problems
+
+    problems += configuration_problems(cfg, production_like=True)  # no capture (mock) provider, real provider complete
     return problems
 
 
@@ -85,6 +88,10 @@ def _register_extensions(app):
             return app.make_default_options_response()
 
     jwt.init_app(app)
+
+    from app.services.email import init_email
+
+    init_email(app)
 
     from app.core.auth import init_jwt
 
