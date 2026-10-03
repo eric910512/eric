@@ -1,23 +1,25 @@
 """Pick the EmailService from ``EMAIL_PROVIDER`` (one instance per app) and check the configuration.
 
 Providers:
-- ``disabled`` — default; nothing is sent (production / staging until a provider is chosen)
+- ``disabled`` — default; nothing is sent (EMAIL_PROVIDER unset)
 - ``capture``  — mock provider for development and tests; refused in staging / production
+- ``brevo``    — Brevo Transactional Email API (brevo.py)
 
-A real provider is added by registering its class in ``REAL_PROVIDERS``; it then needs
-``EMAIL_API_KEY``, ``EMAIL_FROM`` and an https ``APP_BASE_URL`` in production-like environments
-(Render Environment Variables — never in the repository).
+A real provider (``REAL_PROVIDERS``) needs ``EMAIL_API_KEY`` and ``EMAIL_FROM`` in every environment,
+and an https ``APP_BASE_URL`` in production-like environments (Render Environment Variables —
+never in the repository). The app refuses to start otherwise.
 """
 
 from pathlib import Path
 
 from flask import current_app
 
+from app.services.email.brevo import BrevoEmailService
 from app.services.email.capture import CaptureEmailService
 from app.services.email.disabled import DisabledEmailService
 
 MOCK_PROVIDERS = {"capture": CaptureEmailService}
-REAL_PROVIDERS = {}  # e.g. {"resend": ResendEmailService} once a provider is chosen
+REAL_PROVIDERS = {"brevo": BrevoEmailService}
 PROVIDERS = {"disabled": DisabledEmailService, **MOCK_PROVIDERS, **REAL_PROVIDERS}
 
 
@@ -29,12 +31,12 @@ def configuration_problems(config, production_like):
     problems = []
     if production_like and name in MOCK_PROVIDERS:
         problems.append(f"EMAIL_PROVIDER={name} is a development / test provider; use 'disabled' or a real provider.")
-    if production_like and name in REAL_PROVIDERS:
+    if name in REAL_PROVIDERS:
         if not config.get("EMAIL_API_KEY"):
             problems.append("EMAIL_API_KEY must be set for the email provider.")
         if not config.get("EMAIL_FROM"):
             problems.append("EMAIL_FROM must be set for the email provider.")
-        if not str(config.get("APP_BASE_URL") or "").startswith("https://"):
+        if production_like and not str(config.get("APP_BASE_URL") or "").startswith("https://"):
             problems.append("APP_BASE_URL must be the https:// address of the web app (used in email links).")
     return problems
 
