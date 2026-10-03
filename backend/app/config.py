@@ -77,8 +77,8 @@ class Config:
     # Email (patient contact email: verification + notification emails). EMAIL_PROVIDER picks the
     # EmailService: "disabled" (nothing is sent; deliveries are recorded as skipped / not_configured),
     # "capture" (development / tests only: messages are kept in memory and, with EMAIL_CAPTURE_DIR,
-    # written as JSON files; nothing leaves the machine). No real provider is implemented yet; its
-    # settings are read here so a future provider only needs a class (app/services/email/factory.py).
+    # written as JSON files; nothing leaves the machine), "brevo" (Brevo Transactional Email API; needs
+    # EMAIL_API_KEY + EMAIL_FROM, and an https APP_BASE_URL in staging / production — app/services/email/).
     EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "disabled").strip().lower()
     EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY")  # secret: environment only (Render), never in the repository
     EMAIL_FROM = os.environ.get("EMAIL_FROM")

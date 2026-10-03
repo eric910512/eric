@@ -120,7 +120,7 @@
 | 直接識別資料隔離 | 電話、地址、緊急聯絡人、病歷號放在 Phase 2 `patient_contacts` |
 | Demo 標記 | `patient_profiles.is_demo` |
 | Demo 帳號 | 使用 `@demo.local` 等不可投遞網域 |
-| 通知 Email（2026-10-02） | 病人自行填寫的通知 Email 存在 `patient_contacts`（與登入帳號 `users.email` 分開、與 `patient_profiles` 隔離）；必須驗證後且病人開啟 Email 通知才寄信。護理師 / 管理者只看到遮罩（`j***@example.com`）；`audit_logs` 只記欄位名稱，`notification_deliveries` 只存遮罩後地址。Email 只寄**摘要**（「您有一則來自護理團隊的新通知」），不含通知標題與內容。正式 Email 服務尚未設定（`EMAIL_PROVIDER=disabled`）：不寄任何信 |
+| 通知 Email（2026-10-02） | 病人自行填寫的通知 Email 存在 `patient_contacts`（與登入帳號 `users.email` 分開、與 `patient_profiles` 隔離）；必須驗證後且病人開啟 Email 通知才寄信。護理師 / 管理者只看到遮罩（`j***@example.com`）；`audit_logs` 只記欄位名稱，`notification_deliveries` 只存遮罩後地址。Email 只寄**摘要**（「您有一則來自護理團隊的新通知」），不含通知標題與內容。正式寄送使用 Brevo（`EMAIL_PROVIDER=brevo`，2026-10-03 實作）；未設定時為 `disabled`，不寄任何信。服務商回應與 API key 不寫入任何資料表 |
 | Idempotency | `idempotency_records` **不存 response body**，只存資源指標，避免複製一份醫療資料 |
 | AI 資料集 | 只引用 `patient_id` / `patient_code`；正式資料需有 `patient_consents` 同意紀錄 |
 
@@ -842,7 +842,7 @@ erDiagram
 | channel | VARCHAR(20) | NOT NULL | `email` |
 | status | VARCHAR(20) | NOT NULL, 預設 `pending` | `pending`（已規劃、尚未完成；寄送途中程式中斷會停在此狀態）/ `sent` / `failed` / `skipped` |
 | skip_reason | VARCHAR(30) | | `scheduled`（排程提醒不寄）/ `not_configured`（沒有 Email 服務）/ `no_email` / `not_verified` / `disabled`（病人關閉 Email 通知） |
-| provider | VARCHAR(30) | | `disabled` / `capture`（開發測試）/ 未來的正式服務 |
+| provider | VARCHAR(30) | | `disabled` / `capture`（開發測試）/ `brevo`（2026-10-03）；`provider_message_id` 為 Brevo 的 `messageId` |
 | provider_message_id | VARCHAR(255) | | |
 | error_code | VARCHAR(50) | | 系統自訂代碼：`TIMEOUT` / `PROVIDER_REJECTED` / `PROVIDER_ERROR`（不存服務商原始回應） |
 | recipient_masked | VARCHAR(255) | | 遮罩後地址（不另存完整 Email） |
