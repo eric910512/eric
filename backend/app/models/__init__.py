@@ -14,6 +14,8 @@ from app.models.chemotherapy import (
     MedicationRecord,
     RegimenDrug,
 )
+from app.models.contact import PatientContact
+from app.models.delivery import NotificationDelivery
 from app.models.diagnosis import CancerDiagnosis, CancerType
 from app.models.lab import LabResult, LabTestType
 from app.models.notification import AlertRule, Notification
@@ -52,11 +54,13 @@ __all__ = [
     "LabTestType",
     "MedicationRecord",
     "Notification",
+    "NotificationDelivery",
     "NursePatientAssignment",
     "NurseProfile",
     "NursingAssessment",
     "NursingAssessmentItem",
     "PatientCareAlert",
+    "PatientContact",
     "PatientProfile",
     "RegimenDrug",
     "Role",

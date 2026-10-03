@@ -23,6 +23,7 @@ import PatientNotifications from '@/views/PatientNotifications.vue'
 import PatientProfile from '@/views/PatientProfile.vue'
 import PatientSymptoms from '@/views/PatientSymptoms.vue'
 import ReviewQueue from '@/views/ReviewQueue.vue'
+import VerifyEmail from '@/views/VerifyEmail.vue'
 import VitalSignsEntry from '@/views/VitalSignsEntry.vue'
 
 export const router = createRouter({
@@ -71,6 +72,12 @@ export const router = createRouter({
       name: 'patient-profile',
       component: PatientProfile,
       meta: { title: '我的', requiresAuth: true, roles: ['patient'] },
+    },
+    {
+      path: '/patient/verify-email', // link in the verification email (#token=…)
+      name: 'patient-verify-email',
+      component: VerifyEmail,
+      meta: { title: '驗證 Email', requiresAuth: true, roles: ['patient'] },
     },
     {
       path: '/patient/treatment',
@@ -177,7 +184,8 @@ export const router = createRouter({
     { path: '/:pathMatch(.*)*', redirect: { name: 'root' } },
   ],
   // Hash targets stop below the sticky page header (router scrolling ignores CSS scroll-margin).
-  scrollBehavior: (to) => (to.hash ? { el: to.hash, top: 80, behavior: 'smooth' } : { top: 0 }),
+  // #token=… (email verification link) is data, not an anchor
+  scrollBehavior: (to) => (to.hash && !to.hash.startsWith('#token=') ? { el: to.hash, top: 80, behavior: 'smooth' } : { top: 0 }),
 })
 
 router.beforeEach(async (to) => {

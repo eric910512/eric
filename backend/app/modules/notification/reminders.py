@@ -23,6 +23,7 @@ from app.models.base import utcnow
 from app.models.enums import AlertSeverity, NotificationStatus, NotificationType
 from app.modules.chemotherapy.appointments import _datetime
 from app.modules.chemotherapy.services import Fields
+from app.modules.notification.delivery import delivery_payload, latest_email_delivery
 from app.modules.notification.services import origin
 
 SEVERITIES = (AlertSeverity.INFO, AlertSeverity.WARNING)  # critical is reserved for risk alerts
@@ -77,4 +78,5 @@ def scheduled_payload(n):
         "id": n.id, "event_key": n.event_key, "type": n.type, "origin": origin(n), "severity": n.severity,
         "title": n.title, "message": n.message, "scheduled_for": iso_utc(n.scheduled_for), "created_at": iso_utc(n.created_at),
         "patient": {"id": n.patient.public_id, "patient_code": n.patient.patient_code, "display_name": n.patient.display_name},
+        "email_delivery": delivery_payload(latest_email_delivery(n)),  # scheduled reminders: skipped / scheduled
     }

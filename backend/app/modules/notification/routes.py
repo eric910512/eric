@@ -11,7 +11,7 @@ from app.models.enums import AlertSeverity, AuditAction, NotificationType, RoleN
 from app.models import AlertRule, Notification
 from app.modules.admin import services as admin_services
 from app.modules.notification import notification_bp
-from app.modules.notification import reminders
+from app.modules.notification import delivery, reminders
 from app.modules.notification.services import (
     STATUS_FILTERS,
     get_own_notification,
@@ -66,7 +66,12 @@ def index():
 def create_reminder():
     """Manual / scheduled reminder to a patient: ``{patient_id, title, message, severity?: info|warning,
     scheduled_for?}``. Nurse: currently assigned patients only (others 404). Optional
-    ``Idempotency-Key``. The patient sees it once ``scheduled_for`` has passed (or at once)."""
+    ``Idempotency-Key``. The patient sees it once ``scheduled_for`` has passed (or at once).
+
+    Email (second channel, delivery.py): the notification is committed first, then a summary email
+    is sent when the patient's contact email is verified and email notifications are on.
+    ``email_delivery`` in the response reports it (sent / failed / skipped + reason); an email
+    failure never fails this request or changes the notification. A replay never re-sends."""
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         raise APIError(400, "VALIDATION_ERROR", "Request body must be a JSON object")
@@ -77,17 +82,25 @@ def create_reminder():
     ensure_can_view_patient(patient)
     user = g.current_user
 
+    planned = []
+
     def create():
         n = reminders.create_reminder(patient, body)
+        email = delivery.plan_email(n, patient)
         record_data_event(AuditAction.CREATE, "notifications", n.id, patient=patient,
                           changes={"type": n.type, "origin": origin(n), "event_key": n.event_key, "severity": n.severity,
-                                   "title": n.title, "scheduled_for": n.scheduled_for.isoformat() + "Z" if n.scheduled_for else None})
+                                   "title": n.title, "scheduled_for": n.scheduled_for.isoformat() + "Z" if n.scheduled_for else None,
+                                   "email_delivery": {"status": email.status, "skip_reason": email.skip_reason}})
+        planned.append(email)
         return n.id, {"data": notification_payload(n, user)}, 201
 
     def replay(nid):
         return {"data": notification_payload(db.session.get(Notification, nid), user)}
 
-    return run_idempotent(resource_type="notifications", body=body, create=create, replay=replay, required=False)
+    response = run_idempotent(resource_type="notifications", body=body, create=create, replay=replay, required=False)
+    if planned and delivery.dispatch(planned[0]):  # after the commit: the notification already exists
+        return ok(notification_payload(planned[0].notification, user), status=201)
+    return response
 
 
 @notification_bp.get("/scheduled")

@@ -9,7 +9,7 @@ Flask + Flask-SQLAlchemy + Flask-Migrate。環境建置（Python 3.11、venv、�
 見專案根目錄的 `DEPLOYMENT.md` 與 `render.yaml`。重點：
 
 - `FLASK_ENV`：`development`（預設）/ `staging`（production 的安全設定，允許合成示範資料）/ `production`（禁止示範資料）/ `testing`。
-- staging / production 會檢查設定，不安全就拒絕啟動：secret 必須 ≥ 32 字元、彼此不同且不是預設值；不可開 DEBUG；`DATABASE_URL` 必須是 PostgreSQL；`CORS_ORIGINS` 必須是明確的 https 網址。
+- staging / production 會檢查設定，不安全就拒絕啟動：secret 必須 ≥ 32 字元、彼此不同且不是預設值；不可開 DEBUG；`DATABASE_URL` 必須是 PostgreSQL；`CORS_ORIGINS` 必須是明確的 https 網址；`EMAIL_PROVIDER` 不可是 `capture`（開發測試用）或不支援的值（見「病人基本資料與 Email 通知」）。
 - 伺服器：`gunicorn -c gunicorn.conf.py run:app`；Render 用 `scripts/render_start.sh`（先 `db upgrade`，再視 `SEED_DEMO_DATA` 載入示範資料）。
 - 套件：執行期套件在 `backend/requirements.txt`（固定版本，含 `gunicorn`、`psycopg2-binary`）；根目錄 `requirements.txt` 另含開發工具。
 - Render 部署：見專案根目錄 `DEPLOYMENT.md`；部署後以 `scripts/post-deploy-smoke.mjs` 從外部驗證（health、登入、refresh cookie、`/api` proxy、登出；不輸出密碼或 token）。
@@ -46,6 +46,8 @@ python tests/test_labs.py            # 單一 suite 也可以直接執行
 | `test_reminders` | Sprint 8：手動 / 排程提醒建立（護理師限指派病人、管理者）、驗證、Idempotency、`origin`、未到時間病人看不到（清單、詳情、未讀、全部已讀）、到時間後出現、處理流程（接手 → 開始處理 → 完成）、病人隱私、結束指派後 404、稽核 |
 | `test_refresh` | Refresh token 回歸：cookie 屬性（HttpOnly / Secure / SameSite=Strict / Path / 無 Domain）、body 不含 refresh token、DB 只存雜湊、access token 過期 → refresh（需 `X-Requested-With`）→ API 成功、輪替與同一 session / 到期時間、重複使用偵測（整個 session 撤銷）、登出（含過期 access token、只有 cookie）後不能 refresh、改密碼 / 管理者撤銷 / 重設密碼 / 停用後不能 refresh、單一裝置與其他裝置、裝置獨立、refresh token 到期、初始密碼帳號 |
 | `test_sessions` | Authentication Hardening：登入建立 session（`auth_tokens` family、雜湊）、access token `sid`、登出立即失效、自己的 session 清單 / 結束 / 登出其他裝置、改密碼結束其他 session、管理者強制登出、重設密碼（初始密碼、需重設、session 結束）、停用結束 session、稽核不含密碼或 token |
+| `test_patient_profile` | 病人基本資料：本人讀寫（通知 Email、身高、Email 通知開關）、登入 email 不變、不可改別人 / 護理師與管理者不可寫、員工只看到遮罩、Email 未驗證不能開啟通知、驗證連結（雜湊、24 小時、一次性、重寄 / 換 Email 後失效、限本人、429）、體重歷史（`vital_signs`，patient_app、病人為 actor）、BMI、既有 Risk Engine 讀到病人輸入的體重、沒有 Email 服務、稽核不含 Email / 連結 / token |
+| `test_email_delivery` | 護理師發通知 → App + Email：未設定 / 未驗證 / 關閉通知不寄、已驗證 + 開啟才寄（摘要，不含內容）、寄送失敗 / 逾時 / 例外仍 201 且通知不 rollback、處理流程不受影響、排程提醒 skipped、Idempotency replay 不重寄、非指派病人 404、病人 403、風險警示不寄、未設定服務 not_configured、capture 在 staging / production 被拒、時間軸不變、稽核不含地址 / 內容 / 服務商訊息 |
 | `test_patient_management` | Sprint 1：病人 CRUD、代碼產生與撞號、初始密碼與首次登入改密碼、指派 / 結束指派後的存取、角色權限、稽核、完整流程 |
 
 ## 機構設定與首頁版面
@@ -324,6 +326,16 @@ ANC 由護理師直接輸入檢驗報告上的數值，系統不會用 WBC × �
 - 更正經由原本的建立函式（`correction_of=` 參數）產生新紀錄：同樣的驗證與 Alert Engine，保留原 Cycle / `cycle_day`、填寫者與來源；原紀錄 `amended`。
 - 原紀錄的警示：更正後不再符合或已重新通知 → 關閉；仍符合但被冷卻時間擋下 → 保留。標示錯誤 → 關閉全部。
 - Pending：病人自行更正。
+
+## 病人基本資料與 Email 通知（2026-10-02）
+
+- **資料**：通知 Email 在 `patient_contacts`（與登入帳號 `users.email` 分開）、身高 `patient_profiles.height_cm`、體重 `vital_signs.weight_kg`（病人用既有 `POST /vital-signs` 新增，`source = patient_app`、`recorded_by` = 病人帳號）、BMI 即時計算不存 DB。Email 寄送紀錄 `notification_deliveries`（migration `8c6b981c2152`）。程式：`app/modules/patient/profile.py`、`app/modules/notification/delivery.py`、`app/services/email/`。
+- **API**：`GET /patients/{pid|me}/profile`（員工只看到遮罩 Email）、`PATCH /patients/me/profile`（只限病人本人）、`GET /patients/{pid|me}/weights`、`POST /patients/me/email-verification`、`POST /patients/me/email-verification/confirm`；`POST /notifications` 回應多 `email_delivery`。細節見 `docs/api-design.md` §4、§10。
+- **流程**：通知與寄送規劃在同一個 transaction commit 後，才同步呼叫 EmailService（timeout `EMAIL_TIMEOUT_SECONDS`）；Email 失敗只記在 `notification_deliveries`（`failed` + 自訂 `error_code`），通知照常建立、處理流程不變。寄送條件：已驗證 **且** 開啟 Email 通知；排程提醒 `skipped / scheduled`；風險警示不寄。沒有 background worker、沒有重試。
+- **EmailService**（`app/services/email/`）：`base.py` 介面（`send(EmailMessage) → SendResult`，不得超過 timeout）、`DisabledEmailService`（`EMAIL_PROVIDER=disabled`，**staging / production 預設**：什麼都不寄，寄送記為 `skipped / not_configured`，Email 驗證無法進行）、`CaptureEmailService`（`EMAIL_PROVIDER=capture`，**開發與測試預設的 Mock provider**：存在記憶體，設定 `EMAIL_CAPTURE_DIR` 時另存成 JSON 檔（開發預設 `instance/email-outbox/`，已被 git 忽略）；收件人 local part 以 `+fail` / `+timeout` 結尾的**通知** Email 會模擬失敗 / 逾時）。staging / production 拒絕 `capture`。正式服務（Resend / SendGrid / SES / SMTP）**尚未實作**：決定後在 `factory.py` 的 `REAL_PROVIDERS` 註冊一個類別，並在 Render 設定環境變數。
+- **環境變數**：`EMAIL_PROVIDER`（`disabled` / `capture`；開發預設 `capture`，其他預設 `disabled`）、`EMAIL_API_KEY`（secret，只放 Render 環境變數）、`EMAIL_FROM`、`EMAIL_FROM_NAME`（預設「化療照護」）、`EMAIL_TIMEOUT_SECONDS`（預設 10）、`EMAIL_CAPTURE_DIR`（僅開發 / 測試）、`APP_BASE_URL`（Email 連結的網站網址；正式服務需 https）。
+- **Email 內容**：只寄摘要（系統名稱、「您有一則來自護理團隊的新通知」、發送時間、請登入查看、安全提醒），不含通知標題 / 內容、病人代碼、id、token。驗證連結 `<APP_BASE_URL>/patient/verify-email#token=…`（24 小時、一次性、需本人登入）。
+- **稽核**：只記欄位名稱與狀態；不記 Email 地址、驗證連結 / token、Email 內容、服務商回應。
 
 ## Development Seed Data
 

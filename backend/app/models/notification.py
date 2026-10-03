@@ -115,6 +115,9 @@ class Notification(TimestampMixin, db.Model):
     acknowledger = relationship("User", foreign_keys=[acknowledged_by])
     starter = relationship("User", foreign_keys=[started_by])
     resolver = relationship("User", foreign_keys=[resolved_by])
+    deliveries = relationship(
+        "NotificationDelivery", back_populates="notification", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     def __repr__(self):
         return (

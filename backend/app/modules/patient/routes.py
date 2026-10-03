@@ -11,6 +11,7 @@ from app.modules.patient import patient_bp
 from app.models import CancerDiagnosis, CancerType, NursePatientAssignment, PatientCareAlert
 from app.models.enums import AuditAction, RoleName
 from app.modules.patient import management as m
+from app.modules.patient import profile
 from app.modules.patient.timeline import build_timeline, parse_params
 
 STAFF = (RoleName.NURSE, RoleName.ADMIN)
@@ -114,6 +115,77 @@ def create_account(patient_id):
     m.db.session.commit()
     return ok({"patient_id": patient.public_id, "email": patient.user.email, "temporary_password": password,
                "must_change_password": True}, status=201)
+
+
+# ------------------------------------------------------------------ basic data maintained by the patient
+
+
+@patient_bp.get("/<patient_id>/profile")
+@require_auth()
+def get_profile(patient_id):
+    """Basic data: height, latest weight, BMI (computed), contact email and its verification /
+    notification state. ``me`` for patients. Staff (assigned nurse, admin) get the email masked only."""
+    patient = _patient(patient_id)
+    if g.current_user.role_name in STAFF:
+        record_patient_view(patient, resource_type="patient_profile")
+        db.session.commit()
+    return ok(profile.profile_payload(patient, g.current_user))
+
+
+@patient_bp.patch("/<patient_id>/profile")
+@require_auth(RoleName.PATIENT)
+def update_profile(patient_id):
+    """The patient's own basic data: ``{email?, height_cm?, email_notification_enabled?}``. Any other
+    patient → 404 (existing scope rule); nurses / admins cannot use it (403). A new email must be
+    verified again and switches email notifications off; notifications need a verified email (422)."""
+    patient = _patient(patient_id)
+    changed = profile.update_profile(patient, _body())
+    for table, fields in changed.items():
+        changes = {"fields": fields, "by": "patient"}  # field names only, never the email address
+        if "email" in fields:
+            changes["email_verification_reset"] = True
+        record_data_event(AuditAction.UPDATE, table, patient.public_id, patient=patient, changes=changes)
+    db.session.commit()
+    return ok(profile.profile_payload(patient, g.current_user))
+
+
+@patient_bp.get("/<patient_id>/weights")
+@require_auth()
+def weights(patient_id):
+    """Weight history (final ``vital_signs`` with a weight), newest first; ``limit`` 1–100 (default 30).
+    ``source``: patient_app (entered by the patient) / nurse. New weights: ``POST /vital-signs``."""
+    patient = _patient(patient_id)
+    items = profile.weight_history(patient, g.current_user, query_int(request.args, "limit", 30, 1, profile.MAX_WEIGHTS))
+    return ok(items, meta={"total": len(items)})
+
+
+@patient_bp.post("/<patient_id>/email-verification")
+@require_auth(RoleName.PATIENT)
+def request_email_verification(patient_id):
+    """Send a one-time verification link (24 h) to the contact email; earlier links stop working.
+    ``{delivery: {status: sent|failed, error_code}, profile}``. 422 ``EMAIL_NOT_CONFIGURED`` while no
+    email provider is configured; 429 within 60 s of the previous link."""
+    patient = _patient(patient_id)
+    raw, address, now = profile.request_verification(patient)
+    record_data_event(AuditAction.UPDATE, "patient_contacts", patient.public_id, patient=patient,
+                      changes={"email_verification_requested": True})  # never the link or the token
+    db.session.commit()
+    result = profile.send_verification(patient, raw, address, now)
+    delivery = {"status": result.status, "error_code": result.error_code}
+    return ok({"delivery": delivery, "profile": profile.profile_payload(patient, g.current_user)})
+
+
+@patient_bp.post("/<patient_id>/email-verification/confirm")
+@require_auth(RoleName.PATIENT)
+def confirm_email_verification(patient_id):
+    """``{token}`` from the verification link, by the signed-in patient it was sent to. One use only;
+    expired / replaced / used links → 422. Email notifications are switched on separately."""
+    patient = _patient(patient_id)
+    profile.confirm_verification(patient, _body().get("token"))
+    record_data_event(AuditAction.UPDATE, "patient_contacts", patient.public_id, patient=patient,
+                      changes={"fields": ["email_verified_at"], "email_verified": True})
+    db.session.commit()
+    return ok(profile.profile_payload(patient, g.current_user))
 
 
 # ------------------------------------------------------------------ care alerts

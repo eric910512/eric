@@ -74,9 +74,28 @@ class Config:
 
     DEFAULT_PATIENT_SYMPTOM_FORM = "daily_chemo_check"
 
+    # Email (patient contact email: verification + notification emails). EMAIL_PROVIDER picks the
+    # EmailService: "disabled" (nothing is sent; deliveries are recorded as skipped / not_configured),
+    # "capture" (development / tests only: messages are kept in memory and, with EMAIL_CAPTURE_DIR,
+    # written as JSON files; nothing leaves the machine). No real provider is implemented yet; its
+    # settings are read here so a future provider only needs a class (app/services/email/factory.py).
+    EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "disabled").strip().lower()
+    EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY")  # secret: environment only (Render), never in the repository
+    EMAIL_FROM = os.environ.get("EMAIL_FROM")
+    EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "化療照護")
+    EMAIL_TIMEOUT_SECONDS = float(os.environ.get("EMAIL_TIMEOUT_SECONDS", "10"))  # one provider call, inside the request
+    EMAIL_CAPTURE_DIR = os.environ.get("EMAIL_CAPTURE_DIR")
+    # Public URL of the web app, for links in emails (email verification). No trailing slash.
+    APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:5173").rstrip("/")
+    EMAIL_SYSTEM_NAME = "化療照護"
+    EMAIL_VERIFICATION_HOURS = 24
+    EMAIL_VERIFICATION_RESEND_SECONDS = 60
+
 
 class DevelopmentConfig(Config):
     DEBUG = True
+    EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "capture").strip().lower()
+    EMAIL_CAPTURE_DIR = os.environ.get("EMAIL_CAPTURE_DIR", "instance/email-outbox")  # git-ignored
 
 
 class ProductionConfig(Config):
@@ -103,6 +122,8 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     JWT_SECRET_KEY = "testing-only-jwt-secret-key-at-least-32-bytes"
+    EMAIL_PROVIDER = "capture"  # in memory; tests read the captured messages
+    EMAIL_CAPTURE_DIR = None
 
 
 config_by_name = {

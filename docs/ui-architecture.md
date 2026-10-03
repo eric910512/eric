@@ -1,11 +1,11 @@
 # Cancer Care Platform — UI Architecture Design (v1.1)
 
 > 狀態：設計文件；Phase 1 部分畫面已實作（見「實作狀態」）
-> 更新日期：2026-09-29（Sprint 6：病人端完整功能）
+> 更新日期：2026-10-02（病人基本資料 + Email 通知）
 > 參考圖：`docs/design-reference/cancer-dashboard-example.jpg`
 > 資料來源：`docs/database-design.md`（**v3.1**）、`docs/api-design.md`（**v1.1**）
 
-## 實作狀態（2026-09-29）
+## 實作狀態（2026-10-02）
 
 已實作的畫面與元件（`frontend/src/`）；本文件其他內容仍是設計。
 
@@ -23,6 +23,7 @@
 | 治療行程（Sprint 3） | 病人資料頁的「治療行程」（`AppointmentsPanel`）：新增 / 修改（含準備事項）、報到、完成、改期（原行程保留為「已改期」）、取消；建立療程時可同時建立化療注射行程，延後 Cycle 可同步改期。護理端總覽「今日行程」來自 API。病人：首頁「今日行程」顯示已報到 / 已完成狀態與黃底準備事項；「我的療程」有「接下來的行程」；時間軸新增「行程」事件 |
 | 管理端（`/admin/patients`、`/admin/patients/:id`、`/admin/nurses`） | 所有病人（可篩選尚未指派）、新增病人、指派 / 結束指派護理師（含主責）、建立護理師帳號（初始密碼只顯示一次） |
 | 提醒（Sprint 8） | 病人資料頁的「提醒」（`RemindersPanel`，護理師與管理者）：寫提醒（標題、內容、重要性一般 / 請特別注意、立即送出或指定時間，病人時區）、「排程中」（病人還看不到）、「已送出」（處理狀態，接手 → 開始處理 → 完成，完成需填內部處理說明）。病人未開通帳號時不能寫。病人在「通知」看到到時間的提醒（不含處理者與內部說明） |
+| 病人基本資料 + Email 通知（2026-10-02） | 病人「我的」（`/patient/me`，`PatientProfile`）新增「基本資料」：通知 Email（驗證狀態：未設定 / 尚未驗證 / 已驗證，「驗證 Email」/「重新寄送驗證信」；沒有 Email 服務時顯示「系統目前尚未開放 Email 寄送」）、身高、新增體重（送 `POST /vital-signs`）、身高 / 目前體重 / BMI、「接收 Email 通知」（驗證完成前停用）與「儲存」；「體重紀錄」清單（本人輸入 / 醫療團隊量測，無圖表）。說明文字：這是接收通知用的 Email，不會改變登入帳號。驗證連結頁 `VerifyEmail`（`/patient/verify-email#token=…`，需登入；讀取後立即從網址列移除 token）。護理端 / 管理端病人資料頁：「病人登入帳號」區塊顯示通知 Email（遮罩）、Email 驗證、Email 通知；「提醒與通知」（`RemindersPanel`）按鈕改為「發送通知」，說明這位病人是否會同時收到 Email，送出後與每一則提醒顯示 Email 狀態（已寄出 / 寄送失敗（App 通知已送出）/ 未寄 + 原因），與處理狀態（待處理…）分開顯示。通知中心不變 |
 | 登入裝置（Authentication Hardening） | `AccountSessions`（`/account/sessions`，所有角色；頂端列「登入裝置」、病人「我的」）：目前登入的裝置（這個裝置標示）、登出某個裝置、登出其他所有裝置。「登出」會同時結束伺服器端 session。Access token 到期前自動換新（refresh token 為 HttpOnly cookie，頁面讀不到）；過期時換頁或 API 請求會先 refresh 再繼續，session 已結束才回登入頁「登入已逾時」。管理端「帳號狀態」：顯示登入中的裝置數、強制登出、重設密碼（需再按「確定重設」，初始密碼只顯示一次） |
 | 管理者後台（Sprint 7） | `AdminHome`（`/admin`，管理者首頁）：未處理風險警示 / 待審症狀數（唯讀）與帳號、照護團隊計數，各連到處理頁（尚未指派 → `/admin/patients?assigned=false`）。`AdminAccounts`（`/admin/accounts`）：全部角色帳號，依角色 / 狀態 / 關鍵字篩選；停用（需再按「確定停用」）、重新啟用、解除登入鎖定；自己的帳號不顯示操作；新增管理者（初始密碼只顯示一次）。`AdminAudit`（`/admin/audit`）：類別 / 動作 / 對象 / 結果 / 日期篩選、分頁、變更內容（`changes`）展開。`AdminRules`（`/admin/rules`）：風險規則啟用 / 停用、調整門檻與等級、試算（不發送）；症狀量表調整題目順序與必填（版本 +1，病人表單隨之更新）。`AdminSettings`（`/admin/settings`）：機構資訊與安全政策（唯讀）。側欄 `StaffNav` 依序：管理總覽、病人與照護團隊、護理師帳號、帳號狀態、稽核紀錄、風險規則與量表、系統設定。管理者不修改臨床紀錄 |
 | 護理評估（Sprint 4） | 病人資料頁「護理評估」（`AssessmentsPanel`）：新增草稿（SOAP、ECOG、整體狀況、風險、化療準備、問題與措施）、修改 / 簽署自己的草稿、已簽署評估的「修正」（新版本，原評估保留並可看版本紀錄）、項目狀態追蹤；側欄「護理評估」（`/nurse/assessments`）列出自己的待簽署草稿與最近簽署。病人只在時間軸看到「護理師已完成評估」 |
@@ -366,7 +367,7 @@ WidgetFrame ─ CareTopicWidget               [care-topics]
 
 | 項目 | 說明 |
 |---|---|
-| 個資顯示 | 病人端顯示 `display_name` + `patient_code`；不顯示病歷號（`patient_contacts` 屬 Phase 2，且不提供給病人端 widget） |
+| 個資顯示 | 病人端顯示 `display_name` + `patient_code`；不顯示病歷號（`patient_contacts` 屬 Phase 2，且不提供給病人端 widget）。通知 Email（`patient_contacts.email`，2026-10-02）只有病人本人在「我的」看到完整地址；員工畫面只顯示遮罩 |
 | 醫療免責 | 進度、風險類元件附上免責文字（`disclaimer_key` 對應設定檔 / `institution_settings`） |
 | 時間 | 依 `meta.timezone` 顯示在地時間；LiveClock 用 `server_time` 校正裝置時間 |
 | 送出表單（Idempotency） | 症狀、生命徵象表單**每按一次送出產生一個 `Idempotency-Key`**；網路失敗自動重試時沿用同一個 key；使用者改了內容再送出要換新的 key。收到 `Idempotent-Replayed: true` 時照一般成功處理 |

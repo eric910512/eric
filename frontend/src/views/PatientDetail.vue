@@ -374,7 +374,7 @@ dashboard.fetchSettings()
           <AppointmentsPanel class="xl:col-span-2" :patient-id="patient.id" :can-write="isNurse" :timezone="patient.timezone" />
           <AssessmentsPanel class="xl:col-span-2" :patient-id="patient.id" :can-write="isNurse" :timezone="patient.timezone" />
           <RecordsPanel v-if="isNurse" class="xl:col-span-2" :patient-id="patient.id" :can-write="isNurse" :timezone="patient.timezone" />
-          <RemindersPanel class="xl:col-span-2" :patient-id="patient.id" :can-write="isNurse || isAdmin" :has-account="!!patient.account?.has_account" :timezone="patient.timezone" />
+          <RemindersPanel class="xl:col-span-2" :patient-id="patient.id" :can-write="isNurse || isAdmin" :has-account="!!patient.account?.has_account" :timezone="patient.timezone" :email-contact="patient.notification_contact" />
 
           <!-- Login account -->
           <section class="rounded-2xl border border-line bg-surface p-5 xl:col-span-2" aria-labelledby="account-title" data-account>
@@ -392,6 +392,12 @@ dashboard.fetchSettings()
               <dt class="text-ink-soft">狀態</dt>
               <dd data-account-state>{{ !patient.account.is_active ? '已停用' : patient.account.must_change_password ? '尚未設定新密碼（仍是初始密碼）' : '使用中' }}</dd>
               <dt class="text-ink-soft">最後登入</dt><dd>{{ when(patient.account.last_login_at) }}</dd>
+            </dl>
+            <!-- the patient's own notification email (maintained by the patient; staff see it masked only) -->
+            <dl v-if="patient.notification_contact" class="mt-3 grid grid-cols-[6rem_1fr] gap-y-2 border-t border-line pt-3" data-notification-contact>
+              <dt class="text-ink-soft">通知 Email</dt><dd class="break-all" data-contact-email>{{ patient.notification_contact.email_masked ?? '未設定' }}</dd>
+              <dt class="text-ink-soft">Email 驗證</dt><dd data-contact-verified>{{ patient.notification_contact.email_verified ? '已驗證' : '未驗證' }}</dd>
+              <dt class="text-ink-soft">Email 通知</dt><dd data-contact-enabled>{{ patient.notification_contact.email_notification_enabled ? '開啟' : '關閉' }}</dd>
             </dl>
             <form v-else class="mt-3 flex flex-wrap items-end gap-3" data-account-form @submit.prevent="createAccount">
               <p class="w-full text-ink-soft">這位病人還沒有登入帳號。建立後系統會產生初始密碼，只顯示一次。</p>
