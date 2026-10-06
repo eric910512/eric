@@ -608,7 +608,9 @@ def _pending_review_item(record):
         "id": record.id,
         "recorded_at": iso_utc(record.recorded_at),
         "cycle_day": record.cycle_day,
-        "summary": "、".join(f"{v.definition.name_zh} {float(v.score):g}" for v in values),
+        "summary": "、".join(
+            f"{v.definition.name_zh}：{v.option.label_zh}" if v.definition.value_type == SymptomValueType.SINGLE_CHOICE and v.option
+            else f"{v.definition.name_zh} {float(v.score):g}" for v in values),
         "max_score": float(values[0].score) if values else None,
     }
 

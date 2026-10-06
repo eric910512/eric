@@ -3,13 +3,15 @@ import { computed, useId } from 'vue'
 
 /**
  * One question of a dynamic symptom form, rendered from its definition
- * (ui-architecture.md §2.4 DynamicFormField). Supports scale / numeric-as-scale / boolean.
+ * (ui-architecture.md §2.4 DynamicFormField). Supports scale / numeric-as-scale / boolean /
+ * single choice (options in their defined order). ``hint`` shows a reminder under the answer.
  * Uses native radio inputs so keyboard and screen readers work without extra ARIA.
  */
 const props = defineProps({
   definition: { type: Object, required: true },
   required: { type: Boolean, default: false },
   invalid: { type: Boolean, default: false },
+  hint: { type: String, default: '' }, // e.g. a self-care reminder; never blocks submitting
 })
 const model = defineModel({ default: null })
 
@@ -64,6 +66,19 @@ const scalePoints = computed(() => {
       </label>
     </div>
 
+    <!-- single choice: one button per option, in the defined order -->
+    <div v-else-if="definition.value_type === 'single_choice'" class="mt-3 grid gap-2" :class="definition.options.length <= 2 ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-2'">
+      <label v-for="opt in definition.options" :key="opt.value_code" class="relative">
+        <input v-model="model" type="radio" :name="id" :value="opt.value_code" class="peer sr-only" />
+        <span
+          class="grid min-h-12 cursor-pointer place-items-center rounded-lg border px-3 py-2 text-center text-lg font-bold transition-colors
+                 peer-focus-visible:outline-3 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-care"
+          :class="model === opt.value_code ? 'border-care bg-care text-white' : 'border-line bg-surface hover:bg-care-soft'"
+        >{{ opt.label_zh }}</span>
+      </label>
+    </div>
+
     <p v-else class="mt-2 text-ink-soft">此題型尚未支援。</p>
+    <p v-if="hint" class="mt-2 rounded-xl bg-warn-soft px-3 py-2 text-warn" role="status" data-field-hint>{{ hint }}</p>
   </fieldset>
 </template>

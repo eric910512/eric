@@ -931,6 +931,8 @@ Response `200`
 
 ---
 
+> **實作說明（每日症狀與自我照護回報，2026-10-06）**：「每日症狀與自我照護回報」（form `rt_daily_report`，2026-10-06）：沿用既有 symptom 架構，兩個區段為兩個 `symptom_categories`（`rt_symptom_24h`「過去 24 小時症狀自主管理」、`daily_self_care`「我的每日自評」），9 個新 `symptom_definitions`（4 題 0–10 `scale`、5 題 `single_choice`，「有／沒有」也是單選以維持順序與文字；疲倦為新的 `rt_fatigue`，不沿用 `fatigue`，因此既有 `severe_fatigue` 等 alert rule 都不套用到這份表單），全部必填。API 皆為既有 endpoint：`GET /symptoms/forms/rt_daily_report`（每題 `definition` 新增 `category: {code, name_zh}`，所有表單皆有，additive）；`POST /symptoms/records`（`form_code: rt_daily_report`，0–10 用 `value_numeric`、單選用 `option_code`）——**只有這份表單**每位病人每個在地日（病人時區）只能一筆：第二筆回 `409 ALREADY_REPORTED_TODAY`「今天已回報」（`details[0].record_id` 為當天那一筆；不分病人或護理師代填；Idempotency replay 不受影響；更正（amend）不算第二筆，標示錯誤後可再回報）；其他表單（例如 `daily_chemo_check`）不受影響。`GET /symptoms/records/{pid}` 新增選填 `form_code` 篩選。回答 payload 的單選題新增 `option_label`。護理端「需要注意」只沿用既有規則：0–10 分數 ≥ 7（Risk Engine 的 symptom ≥ 7 規則與審閱卡片標示），單選與自我照護答案只顯示、不判定。待審摘要與審閱建立的護理評估摘要中，單選題顯示「題目：選項」。病人選「沒有」時只在畫面提醒，不阻擋送出。
+
 ## 7. Vital Signs API
 
 > **實作說明**：已實作 `POST /api/v1/vital-signs`、`GET /api/v1/vital-signs/reference-ranges`，以及護理師用的 `GET /api/v1/vital-signs/abnormal`（負責病人中超出參考範圍的量測，`?hours=1–168`，含觸發的警示與處理狀態）。`latest`、`trends` 尚未實作。

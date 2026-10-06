@@ -14,7 +14,9 @@ from sqlalchemy import select
 from werkzeug.security import generate_password_hash
 
 from app.extensions import db
+from app import models
 from app.models.base import utcnow
+from app.seeds.rt_daily_report import seed_rt_daily_report
 from app.models import (
     AlertRule,
     LabResult,
@@ -352,6 +354,9 @@ def seed_dev_data(password: str = DEFAULT_DEMO_PASSWORD) -> dict:
             {"form_id": form.id, "definition_id": definitions[code].id},
             {"display_order": order, "is_required": True},
         ))
+
+    # 每日症狀與自我照護回報 (rt_daily_report): same rows as data migration f1a7c3d2b9e4
+    seed_rt_daily_report(_upsert, track, models)
 
     # Phase 1 alert rules for symptom reports (database-design.md §6.K)
     for code, name, definition_code, op, threshold, severity, cooldown, template in [

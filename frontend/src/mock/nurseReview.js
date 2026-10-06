@@ -321,7 +321,7 @@ export const symptomRecordStore = records
 export function addMockSymptomRecord(patientId, rec) {
   const p = patientContext(patientId)
   ;(records[patientId] ??= []).unshift({
-    form: { code: 'daily_chemo_check', version: 1 }, source: 'patient_app', record_status: 'final', notes: null, amends_id: null,
+    form: { code: 'daily_chemo_check', version: 1 }, cycle_id: null, source: 'patient_app', record_status: 'final', notes: null, amends_id: null,
     reported_by: p ? { id: `mock-${p.patient_code}`, display_name: p.display_name } : null,
     review_status: 'submitted', reviewed_at: null, reviewed_by: null, review: null, alerts: [], ...rec, patient_id: patientId,
   })
@@ -345,8 +345,11 @@ export function closeNotifications(rows, note) {
   for (const n of rows) closeEvent(n, note)
 }
 
-export function mockListRecords(patientId, { reviewStatus = 'all' } = {}) {
-  const all = (records[patientId] ?? []).filter((r) => r.record_status === 'final')
+/** Every record of one patient (any status) — the once-per-day check of the daily report mock. */
+export const mockListRecordsStore = (patientId) => records[patientId] ?? []
+
+export function mockListRecords(patientId, { reviewStatus = 'all', formCode = null } = {}) {
+  const all = (records[patientId] ?? []).filter((r) => r.record_status === 'final' && (!formCode || r.form?.code === formCode))
   const items = reviewStatus === 'all' ? all : all.filter((r) => r.review_status === reviewStatus)
   return {
     data: clone(items),

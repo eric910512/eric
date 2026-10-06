@@ -3,6 +3,7 @@ import { computed, onMounted, watch } from 'vue'
 
 import { USE_MOCK } from '@/api/client'
 import AppIcon from '@/components/AppIcon.vue'
+import DailySelfCareReport from '@/components/DailySelfCareReport.vue'
 import PatientBottomNav from '@/components/PatientBottomNav.vue'
 import SymptomQuickReport from '@/components/SymptomQuickReport.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -10,7 +11,7 @@ import { useDashboardStore } from '@/stores/dashboard'
 import { usePatientPortalStore } from '@/stores/patientPortal'
 import { formatTime, localDate } from '@/utils/format'
 
-/** Patient: 症狀回報 (/patient/symptoms) — today's report and my earlier reports. */
+/** Patient: 症狀回報 (/patient/symptoms) — today's report, 每日症狀與自我照護回報 and my earlier reports. */
 const auth = useAuthStore()
 const dashboard = useDashboardStore()
 const portal = usePatientPortalStore()
@@ -20,7 +21,8 @@ const widgets = computed(() => dashboard.patients[patientId.value]?.widgets)
 const today = computed(() => widgets.value?.['today-schedule']?.date ?? localDate(new Date().toISOString(), TZ))
 const unread = computed(() => widgets.value?.notifications?.unread_count ?? 0)
 const when = (iso) => `${localDate(iso, TZ)} ${formatTime(iso, TZ)}`
-const values = (r) => r.values.map((v) => (v.value_boolean !== undefined && v.value_boolean !== null ? (v.value_boolean ? `${v.label}：有` : null) : `${v.label} ${v.score ?? v.value_numeric}`)).filter(Boolean).join('、')
+const values = (r) => r.values.map((v) => (v.option_label !== undefined ? `${v.label}：${v.option_label}`
+  : v.value_boolean !== undefined && v.value_boolean !== null ? (v.value_boolean ? `${v.label}：有` : null) : `${v.label} ${v.score ?? v.value_numeric}`)).filter(Boolean).join('、')
 
 onMounted(() => {
   if (!widgets.value) dashboard.fetchPatientDashboard(patientId.value)
@@ -51,6 +53,8 @@ watch(() => widgets.value?.['symptom-quick-report']?.today_record_id, (id, old) 
         :hotline="widgets['today-schedule']?.quick_contact ?? null"
       />
       <div v-else class="h-32 animate-pulse rounded-2xl bg-surface" aria-busy="true" />
+
+      <DailySelfCareReport :patient-id="patientId" :timezone="TZ" @submitted="portal.fetchRecords(patientId)" />
 
       <section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="my-reports" data-my-reports :data-loaded="!!portal.records">
         <h2 id="my-reports" class="text-lg font-bold">我的回報</h2>

@@ -317,7 +317,7 @@ export function mockPendingReviews(visible) {
     .sort((a, b) => Date.parse(a.recorded_at) - Date.parse(b.recorded_at) || a.id - b.id)
   const items = rows.map((r) => {
     const scored = r.values.filter((v) => v.score != null).sort((a, b) => b.score - a.score)
-    return { id: r.id, recorded_at: r.recorded_at, cycle_day: r.cycle_day, summary: scored.map((v) => `${v.label} ${v.score}`).join('、'),
+    return { id: r.id, recorded_at: r.recorded_at, cycle_day: r.cycle_day, summary: scored.map((v) => (v.option_label !== undefined ? `${v.label}：${v.option_label}` : `${v.label} ${v.score}`)).join('、'),
       max_score: scored[0]?.score ?? null, open_alert_count: Object.keys(openAlertsOf('symptom_records', r.id)).length, patient: patientRef(r.patient_id) }
   })
   return { data: items, meta: { total: items.length } }
