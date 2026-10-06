@@ -20,7 +20,7 @@ from app.core.timeutil import iso_utc
 from app.extensions import db
 from app.models import Notification
 from app.models.base import utcnow
-from app.models.enums import AlertSeverity, NotificationStatus, NotificationType
+from app.models.enums import AlertSeverity, EmailMode, NotificationStatus, NotificationType, ReminderCategory
 from app.modules.chemotherapy.appointments import _datetime
 from app.modules.chemotherapy.services import Fields
 from app.modules.notification.delivery import delivery_payload, latest_email_delivery
@@ -32,14 +32,18 @@ MIN_AHEAD = timedelta(minutes=1)
 
 
 def create_reminder(patient, body):
-    """``{title, message, severity?: info|warning, scheduled_for?: ISO datetime (future, ≤ 1 year)}``."""
+    """``{title, message, severity?: info|warning, scheduled_for?: ISO datetime (future, ≤ 1 year),
+    category?: topic, email_mode?: none|summary|full}``. Returns ``(notification, email options)``;
+    the email options go to delivery.plan_email(), which applies the content policy."""
     f = Fields(body, "提醒內容有誤")
     f.text("title", 200, required=True)
     f.text("message", 2000, required=True)
     f.choice("severity", SEVERITIES)
+    f.choice("category", ReminderCategory.ALL)  # omitted → clinical_other (email_policy)
+    f.choice("email_mode", EmailMode.ALL)  # omitted → summary
     if "type" in body and body["type"] != NotificationType.REMINDER:
         f.error("type", "must be 'reminder'")
-    f.unknown(("patient_id", "type", "title", "message", "severity", "scheduled_for"))
+    f.unknown(("patient_id", "type", "title", "message", "severity", "scheduled_for", "category", "email_mode"))
     now = utcnow()
     at = None
     if body.get("scheduled_for") is not None:
@@ -60,7 +64,7 @@ def create_reminder(patient, body):
     )
     db.session.add(n)
     db.session.flush()
-    return n
+    return n, {"category": values.get("category"), "requested_mode": values.get("email_mode")}
 
 
 def scheduled_reminders(patient):

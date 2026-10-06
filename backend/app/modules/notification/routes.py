@@ -65,7 +65,7 @@ def index():
 @require_auth(RoleName.NURSE, RoleName.ADMIN)
 def create_reminder():
     """Manual / scheduled reminder to a patient: ``{patient_id, title, message, severity?: info|warning,
-    scheduled_for?}``. Nurse: currently assigned patients only (others 404). Optional
+    scheduled_for?, category?, email_mode?: none|summary|full}``. Nurse: currently assigned patients only (others 404). Optional
     ``Idempotency-Key``. The patient sees it once ``scheduled_for`` has passed (or at once).
 
     Email (second channel, delivery.py): the notification is committed first, then a summary email
@@ -85,12 +85,15 @@ def create_reminder():
     planned = []
 
     def create():
-        n = reminders.create_reminder(patient, body)
-        email = delivery.plan_email(n, patient)
+        n, email_options = reminders.create_reminder(patient, body)
+        email = delivery.plan_email(n, patient, **email_options)  # content policy applied here, not in the client
         record_data_event(AuditAction.CREATE, "notifications", n.id, patient=patient,
                           changes={"type": n.type, "origin": origin(n), "event_key": n.event_key, "severity": n.severity,
                                    "title": n.title, "scheduled_for": n.scheduled_for.isoformat() + "Z" if n.scheduled_for else None,
-                                   "email_delivery": {"status": email.status, "skip_reason": email.skip_reason}})
+                                   "email_delivery": {"status": email.status, "skip_reason": email.skip_reason,
+                                                      "category": email.content_category, "mode_requested": email.email_mode_requested,
+                                                      "mode": email.email_mode,
+                                                      "downgraded": delivery.delivery_payload(email)["downgraded"]}})
         planned.append(email)
         return n.id, {"data": notification_payload(n, user)}, 201
 

@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import { useRemindersStore } from '@/stores/reminders'
+import { allowsFull, categoryLabel, DEFAULT_CATEGORY, DEFAULT_EMAIL_MODE, EMAIL_CATEGORIES, EMAIL_MODES, SENSITIVE_NOTICE } from '@/utils/emailPolicy'
 import { formatTime, localDate } from '@/utils/format'
 
 /**
@@ -29,21 +30,23 @@ const EMAIL_STATUS = { sent: 'Email 已寄出', failed: 'Email 寄送失敗', pe
 const EMAIL_CLASS = { sent: 'bg-ok-soft text-ok', failed: 'bg-critical-soft text-critical', pending: 'bg-care-soft text-care', skipped: 'bg-mist text-ink-soft' }
 const SKIP = {
   no_email: '病人未設定 Email', not_verified: '病人 Email 尚未驗證', disabled: '病人未開啟 Email 通知',
-  scheduled: '排程提醒不寄 Email', not_configured: '系統尚未設定 Email 服務',
+  scheduled: '排程提醒不寄 Email', not_configured: '系統尚未設定 Email 服務', not_requested: '選擇不寄 Email',
 }
 const ERROR = { TIMEOUT: '逾時', PROVIDER_REJECTED: '寄送服務拒收', PROVIDER_ERROR: '寄送服務錯誤' }
+const MODE_TEXT = { summary: '摘要', full: '標題與內容' }
 function emailText(d) {
   if (!d) return ''
   if (d.status === 'skipped') return `${EMAIL_STATUS.skipped}（${SKIP[d.skip_reason] ?? d.skip_reason}）`
-  if (d.status === 'failed') return `${EMAIL_STATUS.failed}（${ERROR[d.error_code] ?? d.error_code}，App 通知已送出）`
-  return EMAIL_STATUS[d.status] ?? d.status
+  const mode = MODE_TEXT[d.mode] ? `（${MODE_TEXT[d.mode]}${d.downgraded ? '，敏感主題已改為摘要' : ''}）` : ''
+  if (d.status === 'failed') return `${EMAIL_STATUS.failed}${mode}（${ERROR[d.error_code] ?? d.error_code}，App 通知已送出）`
+  return `${EMAIL_STATUS[d.status] ?? d.status}${mode}`
 }
 const emailChannel = computed(() => {
   const c = props.emailContact
   if (!c?.email_masked) return '病人未設定通知 Email：只會送 App 通知。'
   if (!c.email_verified) return `病人的 Email（${c.email_masked}）尚未驗證：只會送 App 通知。`
   if (!c.email_notification_enabled) return `病人未開啟 Email 通知（${c.email_masked}）：只會送 App 通知。`
-  return `病人已開啟 Email 通知（${c.email_masked}）：立即送出的通知會同時寄出 Email 摘要（不含內容）。`
+  return `病人已開啟 Email 通知（${c.email_masked}）：立即送出的通知會依下方「Email 通知」設定寄出 Email。`
 })
 
 const sent = computed(() => store.sent[props.patientId] ?? null)
@@ -52,8 +55,13 @@ const loadError = computed(() => store.errors[props.patientId])
 const when = (iso) => `${localDate(iso, props.timezone)} ${formatTime(iso, props.timezone)}`
 const toIso = (local) => new Date(`${local}:00+08:00`).toISOString() // the input is in the patient's timezone (Asia/Taipei)
 
-const blank = () => ({ title: '', message: '', severity: 'info', timing: 'now', at: '' })
+const blank = () => ({ title: '', message: '', severity: 'info', timing: 'now', at: '', category: DEFAULT_CATEGORY, emailMode: DEFAULT_EMAIL_MODE })
 const form = reactive({ open: false, ...blank() })
+// email content policy (the backend enforces it again): sensitive topics never offer 標題與內容
+const fullAllowed = computed(() => allowsFull(form.category))
+watch(() => form.category, () => {
+  if (!fullAllowed.value && form.emailMode === 'full') form.emailMode = 'summary'
+})
 const fieldErrors = ref({})
 const failure = ref('')
 const notice = ref('')
@@ -76,6 +84,7 @@ async function submit() {
   submitting.value = true
   try {
     const payload = { title: form.title.trim(), message: form.message.trim(), severity: form.severity,
+      category: form.category, email_mode: form.emailMode,
       ...(form.timing === 'later' ? { scheduled_for: toIso(form.at) } : {}) }
     const r = await store.create(props.patientId, payload, key)
     const email = r.email_delivery ? `；${emailText(r.email_delivery)}` : ''
@@ -157,6 +166,23 @@ watch(() => props.patientId, (id) => store.fetch(id))
         </div>
         <span v-if="fieldErrors.scheduled_for" class="mt-1 block text-sm text-critical">{{ fieldErrors.scheduled_for }}</span>
       </fieldset>
+      <label class="block"><span class="font-medium">通知主題</span>
+        <select v-model="form.category" name="category" class="mt-1 block min-h-12 w-full rounded-xl border border-line bg-surface px-3" :aria-invalid="!!fieldErrors.category">
+          <option v-for="c in EMAIL_CATEGORIES" :key="c.value" :value="c.value">{{ c.label }}</option>
+        </select>
+        <span v-if="fieldErrors.category" class="mt-1 block text-sm text-critical">{{ fieldErrors.category }}</span>
+      </label>
+      <fieldset data-email-mode>
+        <legend class="font-medium">Email 通知</legend>
+        <div class="mt-1 flex flex-wrap gap-4">
+          <label class="flex min-h-11 items-center gap-2"><input v-model="form.emailMode" type="radio" name="email_mode" value="none" class="size-5" /> {{ EMAIL_MODES.none }}</label>
+          <label class="flex min-h-11 items-center gap-2"><input v-model="form.emailMode" type="radio" name="email_mode" value="summary" class="size-5" /> {{ EMAIL_MODES.summary }}</label>
+          <label v-if="fullAllowed" class="flex min-h-11 items-center gap-2"><input v-model="form.emailMode" type="radio" name="email_mode" value="full" class="size-5" /> {{ EMAIL_MODES.full }}</label>
+        </div>
+        <p v-if="!fullAllowed" class="mt-1 rounded-xl bg-warn-soft px-3 py-2 text-sm text-warn" data-sensitive-notice>{{ SENSITIVE_NOTICE }}</p>
+        <p v-else-if="form.emailMode === 'full'" class="mt-1 text-sm text-ink-soft">Email 會包含標題與內容，請勿填寫診斷、檢驗數值等敏感醫療資訊。</p>
+        <span v-if="fieldErrors.email_mode" class="mt-1 block text-sm text-critical">{{ fieldErrors.email_mode }}</span>
+      </fieldset>
       <div class="flex flex-wrap gap-2">
         <button type="submit" class="min-h-12 rounded-full bg-care px-6 font-bold text-white hover:bg-care/90 disabled:opacity-60" :disabled="submitting">
           {{ submitting ? '送出中…' : form.timing === 'later' ? '排定提醒' : '送出提醒' }}
@@ -190,8 +216,10 @@ watch(() => props.patientId, (id) => store.fetch(id))
                 </p>
                 <p class="text-sm break-words text-ink-soft">{{ r.message }}</p>
                 <p class="text-sm text-ink-soft">{{ ORIGIN[r.origin] ?? r.origin }}，{{ when(r.scheduled_for ?? r.created_at) }}</p>
-                <p v-if="r.email_delivery" class="mt-1 text-sm" data-email-delivery :data-email-status="r.email_delivery.status">
+                <p v-if="r.email_delivery" class="mt-1 text-sm" data-email-delivery :data-email-status="r.email_delivery.status"
+                  :data-email-mode="r.email_delivery.mode" :data-email-downgraded="r.email_delivery.downgraded ? 'true' : 'false'">
                   <span class="rounded-full px-2 py-0.5" :class="EMAIL_CLASS[r.email_delivery.status]">{{ emailText(r.email_delivery) }}</span>
+                  <span v-if="r.email_delivery.category" class="ml-2 text-ink-soft">主題：{{ categoryLabel(r.email_delivery.category) }}</span>
                 </p>
                 <p v-if="r.handling?.resolution_note" class="text-sm text-ink-soft">處理說明（內部）：{{ r.handling.resolution_note }}</p>
               </div>

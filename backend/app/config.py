@@ -82,12 +82,12 @@ class Config:
     EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "disabled").strip().lower()
     EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY")  # secret: environment only (Render), never in the repository
     EMAIL_FROM = os.environ.get("EMAIL_FROM")
-    EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "化療照護")
+    EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "癌症照護系統")
     EMAIL_TIMEOUT_SECONDS = float(os.environ.get("EMAIL_TIMEOUT_SECONDS", "10"))  # one provider call, inside the request
     EMAIL_CAPTURE_DIR = os.environ.get("EMAIL_CAPTURE_DIR")
     # Public URL of the web app, for links in emails (email verification). No trailing slash.
     APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:5173").rstrip("/")
-    EMAIL_SYSTEM_NAME = "化療照護"
+    EMAIL_SYSTEM_NAME = "癌症照護系統"  # name used in every email (subject, body, sign-in button)
     EMAIL_VERIFICATION_HOURS = 24
     EMAIL_VERIFICATION_RESEND_SECONDS = 60
 

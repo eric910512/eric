@@ -849,7 +849,13 @@ erDiagram
 | attempted_at / completed_at | DATETIME | | |
 | created_at / updated_at | DATETIME | | |
 
+| content_category | VARCHAR(30) | | **2026-10-06**：護理師選的通知主題（`schedule` / `preparation` / `medication` / `symptom_followup` / `clinical_other`） |
+| email_mode_requested | VARCHAR(10) | | **2026-10-06**：要求的 Email 模式 `none` / `summary` / `full` |
+| email_mode | VARCHAR(10) | | **2026-10-06**：實際套用的模式（敏感主題的 `full` → `summary`）；舊資料 NULL = 摘要 |
+
 **Index**：`(notification_id)`、`(status, created_at)`
+
+> **Email 內容分級（2026-10-06，migration `470df9cf2163`）**：只在 `notification_deliveries` 新增上表三個可為 NULL 的欄位，`notifications` 不變。通知主題 `category`：`schedule`（行程與報到）、`preparation`（就診準備）→ 允許 `full`；`medication`（用藥與治療）、`symptom_followup`（症狀與照護追蹤）、`clinical_other`（其他醫療相關）→ 最多 `summary`；未指定 = `clinical_other`。`email_mode`：`none` / `summary` / `full`，未指定 = `summary`。`skip_reason` 新增 `not_requested`（`none`）。
 ---
 
 ## 7. Phase 2 Extension — 欄位設計

@@ -376,4 +376,25 @@ class DeliverySkipReason:
     DISABLED = "disabled"  # the patient switched email notifications off
     SCHEDULED = "scheduled"  # scheduled reminders are not emailed (no background scheduler)
     NOT_CONFIGURED = "not_configured"  # no real email provider configured (EMAIL_PROVIDER=disabled)
-    ALL = (NO_EMAIL, NOT_VERIFIED, DISABLED, SCHEDULED, NOT_CONFIGURED)
+    NOT_REQUESTED = "not_requested"  # the nurse chose email_mode=none
+    ALL = (NO_EMAIL, NOT_VERIFIED, DISABLED, SCHEDULED, NOT_CONFIGURED, NOT_REQUESTED)
+
+
+class EmailMode:
+    """What the email of a nurse-sent notification may contain (notification_deliveries.email_mode)."""
+
+    NONE = "none"  # no email
+    SUMMARY = "summary"  # system name, a (possibly generic) title, time, sign-in link — no content
+    FULL = "full"  # title + content (non-sensitive topics only)
+    ALL = (NONE, SUMMARY, FULL)
+
+
+class ReminderCategory:
+    """Topic of a nurse-sent notification; decides the most an email may show (email_policy.py)."""
+
+    SCHEDULE = "schedule"  # 行程與報到
+    PREPARATION = "preparation"  # 就診準備
+    MEDICATION = "medication"  # 用藥與治療
+    SYMPTOM_FOLLOWUP = "symptom_followup"  # 症狀與照護追蹤
+    CLINICAL_OTHER = "clinical_other"  # 其他醫療相關 (also: not specified)
+    ALL = (SCHEDULE, PREPARATION, MEDICATION, SYMPTOM_FOLLOWUP, CLINICAL_OTHER)

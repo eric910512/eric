@@ -6,6 +6,10 @@ delivery has its own status and never changes the notification's handling lifecy
 
 No copy of the address (``recipient_masked`` only) and no raw provider response is stored;
 ``error_code`` is one of our own codes.
+
+``content_category`` / ``email_mode_requested`` / ``email_mode``: the email content policy
+(email_policy.py). ``email_mode_requested = full`` with ``email_mode = summary`` means the system
+downgraded the email because the topic is sensitive.
 """
 
 from datetime import datetime
@@ -38,6 +42,11 @@ class NotificationDelivery(TimestampMixin, db.Model):
     provider_message_id: Mapped[str | None] = mapped_column(db.String(255))
     error_code: Mapped[str | None] = mapped_column(db.String(50))
     recipient_masked: Mapped[str | None] = mapped_column(db.String(255))
+    # email content policy (email_policy.py): the nurse's topic, the mode asked for and the mode applied;
+    # NULL on rows created before the policy existed (= summary)
+    content_category: Mapped[str | None] = mapped_column(db.String(30))
+    email_mode_requested: Mapped[str | None] = mapped_column(db.String(10))
+    email_mode: Mapped[str | None] = mapped_column(db.String(10))
     attempted_at: Mapped[datetime | None] = mapped_column(db.DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(db.DateTime)
 

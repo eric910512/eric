@@ -56,6 +56,7 @@ class CaptureEmailService(EmailService):
             "subject": message.subject,
             "text": message.text,
             "purpose": message.purpose,
+            "html": message.html,
             "status": status,
             "at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         }

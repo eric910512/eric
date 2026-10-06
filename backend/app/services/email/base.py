@@ -36,6 +36,9 @@ class EmailMessage:
     subject: str
     text: str
     purpose: str
+    # Optional HTML body built by the template (already escaped; only system links are <a>). Providers
+    # that send HTML use it as is; when absent they derive HTML from ``text``.
+    html: str | None = None
 
 
 @dataclass(frozen=True)

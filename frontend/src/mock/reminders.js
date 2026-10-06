@@ -13,10 +13,11 @@ import { addMockReminder, mockReminderRows, mockReminderView } from '@/mock/nurs
 import { patientDashboards } from '@/mock/patientDashboards'
 import { MockApiError, mockAccessPatient, mockCurrentUser } from '@/mock/patients'
 import { mockDeliverReminderEmail } from '@/mock/profile'
+import { EMAIL_CATEGORIES, EMAIL_MODES } from '@/utils/emailPolicy'
 
 const MIN_AHEAD = 60e3
 const MAX_AHEAD = 366 * 86400e3
-const ALLOWED = ['patient_id', 'type', 'title', 'message', 'severity', 'scheduled_for']
+const ALLOWED = ['patient_id', 'type', 'title', 'message', 'severity', 'scheduled_for', 'category', 'email_mode']
 const seen = {} // Idempotency-Key → { hash, id } | { hash, error } (in memory, like the rest of the mock notifications)
 const invalid = (details) => new MockApiError(400, 'VALIDATION_ERROR', '提醒內容有誤', details)
 
@@ -30,6 +31,9 @@ function validate(body) {
   text('title', 200)
   text('message', 2000)
   if ('severity' in body && !['info', 'warning'].includes(body.severity)) d.push({ field: 'severity', issue: 'must be one of: info, warning' })
+  const categories = EMAIL_CATEGORIES.map((c) => c.value)
+  if ('category' in body && !categories.includes(body.category)) d.push({ field: 'category', issue: `must be one of: ${categories.join(', ')}` })
+  if ('email_mode' in body && !Object.keys(EMAIL_MODES).includes(body.email_mode)) d.push({ field: 'email_mode', issue: `must be one of: ${Object.keys(EMAIL_MODES).join(', ')}` })
   if ('type' in body && body.type !== 'reminder') d.push({ field: 'type', issue: "must be 'reminder'" })
   for (const k of Object.keys(body).filter((x) => !ALLOWED.includes(x)).sort()) d.push({ field: k, issue: 'is not a supported field' })
   let at = null
@@ -61,7 +65,10 @@ function create(body) {
     origin: at ? 'scheduled' : 'manual', scheduled_for: scheduledFor, created_at: created,
   })
   // second channel (= delivery.py): the reminder exists first; the email outcome never fails it
-  n.email_delivery = mockDeliverReminderEmail(patient.id, { scheduledFor, sentAt: scheduledFor ?? created })
+  n.email_delivery = mockDeliverReminderEmail(patient.id, {
+    scheduledFor, sentAt: scheduledFor ?? created, category: body.category ?? null, emailMode: body.email_mode ?? null,
+    title: n.title, message: n.message,
+  })
   return { data: mockReminderView(n) }
 }
 

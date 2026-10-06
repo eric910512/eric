@@ -28,6 +28,7 @@ from app.models.enums import NotificationType, TimelineEventType, TokenType
 from app.seeds.dev import seed_dev_data
 from app.services.email.disabled import DisabledEmailService
 from app.services.email.factory import configuration_problems
+from app.modules.notification.delivery import delivery_payload
 
 ok = []
 
@@ -41,7 +42,8 @@ app = create_app("testing")
 c = app.test_client()
 service = app.extensions["email_service"]
 outbox = service.outbox
-DELIVERY_KEYS = {"channel", "status", "skip_reason", "error_code", "recipient_masked", "attempted_at", "completed_at"}
+DELIVERY_KEYS = {"channel", "status", "skip_reason", "error_code", "recipient_masked", "attempted_at", "completed_at",
+                 "category", "mode_requested", "mode", "downgraded"}  # email content policy (2026-10-06)
 
 
 def token(email, password="Demo@1234"):
@@ -134,7 +136,7 @@ with app.app_context():
     check("app notification unchanged by the email: status new, lifecycle intact", d["status"] == "new" and d["status_text"] == "待處理")
     text = emails[0]["subject"] + emails[0]["text"]
     check("email = summary: system name, 「您有一則來自護理團隊的新通知」, time, sign-in hint, security note",
-          "化療照護" in text and "您有一則來自護理團隊的新通知" in text and "發送時間" in text and "請登入" in text and "安全提醒" in text, text)
+          "癌症照護系統" in text and "您有一則來自護理團隊的新通知" in text and "發送時間" in text and "請登入" in text and "安全提醒" in text, text)
     leaked = [x for x in (BODY["title"], BODY["message"], "09:00", p1.patient_code, pid, p1.user.public_id, p1.user.email, "token") if x in text]
     check("email holds no notification content, patient code, ids, login email or token", not leaked, leaked)
     lst = c.get(f"{URL}?per_page=100", headers=H(pt)).get_json()["data"]
@@ -187,7 +189,7 @@ with app.app_context():
     check("provider crash → 201, delivery failed / PROVIDER_ERROR", r.status_code == 201 and d["email_delivery"]["status"] == "failed"
           and d["email_delivery"]["error_code"] == "PROVIDER_ERROR", d["email_delivery"])
     crash_row = db.session.query(NotificationDelivery).filter_by(notification_id=d["id"]).one()
-    check("no provider detail stored on the delivery", "sk-secret" not in json.dumps({k: str(getattr(crash_row, k)) for k in DELIVERY_KEYS | {"provider_message_id", "provider"}}))
+    check("no provider detail stored on the delivery", "sk-secret" not in json.dumps({**delivery_payload(crash_row), "provider": crash_row.provider, "provider_message_id": crash_row.provider_message_id}))
 
     # ================================================================ 6. lifecycle untouched by email
     for action in ("acknowledge", "start"):
