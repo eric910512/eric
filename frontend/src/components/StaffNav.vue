@@ -16,6 +16,7 @@ const NAV = [
   { label: '病人與照護團隊', icon: 'users', to: { name: 'admin-patients' }, key: 'admin-patients' },
   { label: '護理師帳號', icon: 'user', to: { name: 'admin-nurses' }, key: 'admin-nurses' },
   { label: '帳號狀態', icon: 'shield', to: { name: 'admin-accounts' }, key: 'admin-accounts' },
+  { label: '批量建立教學帳號', icon: 'users', to: { name: 'admin-training' }, key: 'admin-training' },
   { label: '稽核紀錄', icon: 'clipboard', to: { name: 'admin-audit' }, key: 'admin-audit' },
   { label: '風險規則與量表', icon: 'alert', to: { name: 'admin-rules' }, key: 'admin-rules' },
   { label: '系統設定', icon: 'chart', to: { name: 'admin-settings' }, key: 'admin-settings' },

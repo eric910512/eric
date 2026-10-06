@@ -79,6 +79,29 @@ export const useAdminStore = defineStore('admin', {
     },
 
     /** filters: { actor_id, action, resource_type, category, outcome, from, to, page } */
+    /** POST /admin/training-accounts/preview — read-only plan of a batch (≤ 50 pairs). */
+    async previewTraining(spec) {
+      const body = await call('mockTrainingPreview', [spec], () => api.post('/admin/training-accounts/preview', spec))
+      return body.data
+    },
+
+    /**
+     * Create a batch in requests of 10 pairs (Render Free / Gunicorn timeout). `onProgress(done, total)`
+     * after each request. Returns { rows, summary }. The password is only sent, never kept in the store.
+     */
+    async createTraining(spec, password, onProgress = () => {}) {
+      const rows = []
+      const last = spec.start + spec.count - 1
+      for (let start = spec.start; start <= last; start += 10) {
+        const chunk = { ...spec, start, count: Math.min(10, last - start + 1), password, confirm: true }
+        const body = await call('mockTrainingCreate', [chunk], () => api.post('/admin/training-accounts', chunk))
+        rows.push(...body.data.rows)
+        onProgress(rows.length, spec.count)
+      }
+      const summary = Object.fromEntries(['created', 'exists', 'conflict', 'failed'].map((k) => [k, rows.filter((r) => r.status === k).length]))
+      return { rows, summary }
+    },
+
     async searchAudit(filters = {}) {
       const params = Object.fromEntries(Object.entries({ per_page: 50, ...filters }).filter(([, v]) => v !== '' && v != null))
       const body = await this._load('audit', () => call('mockSearchAudit', [params], () => api.get('/admin/audit-logs', { params })))

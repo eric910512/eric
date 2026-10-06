@@ -1584,6 +1584,8 @@ Response `200`：更新後的設定（`version: 3`）。會依 `value_schema` �
 | `/api/v1/admin/export-requests/{id}/reject` | POST | admin（非申請人） | 退回 | data_export_requests | 3 |
 | `/api/v1/admin/export-requests/{id}/download` | GET | 申請人 | 下載（寫入 `EXPORT` 稽核） | data_export_requests, audit_logs | 3 |
 
+> **實作說明（批量建立教學帳號，2026-10-06）**：admin 專用，且只在允許合成示範資料的環境（`ALLOW_DEMO_SEED`：development / testing / staging）；production 一律 `403 TRAINING_ACCOUNTS_DISABLED`。`POST /api/v1/admin/training-accounts/preview` `{start, count ≤ 50, patient_prefix, nurse_prefix, domain?=demo.local, patient_name_prefix, nurse_name_prefix}`：唯讀，逐號回傳 `will_create` / `exists` / `conflict`。`POST /api/v1/admin/training-accounts`（同欄位，`count ≤ 10`，加 `password`、`confirm: true`）→ `201 {rows, summary}`；每一號為一組：護理師帳號（`{nurse_prefix}{001}@{domain}`、名稱 `{nurse_name_prefix} 001`、員工編號 `NURSEFYU001`）、病人（自動病人代碼、出生日期 1970-01-01）與病人登入帳號、該護理師為主責的唯一指派。每組獨立 commit，失敗整組復原（`failed`）；兩個帳號都存在且已是這一組一對一主責 → `exists`（略過，不重設密碼）；其他任何既有帳號 / 同名病人 / 員工編號衝突 → `conflict`（不建立任何資料）。共同密碼套用一般密碼規則（8–128 字元、英文 + 數字），每個帳號只存雜湊，不出現在回應、稽核或 log；教學帳號建立時即設定 `password_changed_at`，學生第一次登入不需改密碼（其他建立帳號的方式不變，仍須改密碼）。稽核：每個帳號 / 病人 / 指派各一筆（`training_account: true`、`password_set_by_admin: true`），每次請求一筆批次摘要（`resource_type = training_accounts`）。隔離完全沿用既有規則：護理師只看到有效指派的病人、病人只看到自己。
+
 ### POST `/api/v1/admin/users`
 
 Request

@@ -155,6 +155,14 @@ export { mockMyMarkRead, mockMyNotification, mockMyNotifications, mockMyReadAll,
 // admin console: every change is audited (the mock audit log records the admin console's own actions)
 export { mockAdminOverview, mockAdminSettings, mockListForms, mockSearchAudit } from '@/mock/admin'
 export { mockGetRule, mockListRules } from '@/mock/alertRules'
+export function mockTrainingPreview(body) {
+  return care.mockTrainingPreview(body)
+}
+export function mockTrainingCreate(body) {
+  const res = care.mockTrainingCreate(body)
+  admin.mockAudit('CREATE', 'training_accounts', `${body.patient_prefix}/${body.nurse_prefix}:${body.start}`, { batch: true, ...res.data.summary })
+  return res
+}
 export function mockCreateNurse(body) {
   const res = care.mockCreateNurse(body)
   admin.mockAudit('CREATE', 'users', res.data.id, { role: res.data.role, temporary_password_issued: true })

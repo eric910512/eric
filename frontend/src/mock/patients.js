@@ -882,6 +882,112 @@ export function mockPatientAccount(patientId) {
   return p?.account_email && state.accounts[p.account_email] ? person(state.accounts[p.account_email]) : null
 }
 
+// ------------------------------------------------------------------ training (demo) accounts (= app/modules/admin/training.py)
+const TRAINING_FIELDS = ['start', 'count', 'patient_prefix', 'nurse_prefix', 'domain', 'patient_name_prefix', 'nurse_name_prefix']
+const TRAINING_PREFIX = /^[a-z][a-z0-9]{0,29}$/
+const TRAINING_DOMAIN = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/
+function trainingSpec(body, creating) {
+  const d = []
+  const allowed = new Set([...TRAINING_FIELDS, ...(creating ? ['password', 'confirm'] : [])])
+  for (const k of Object.keys(body).filter((x) => !allowed.has(x)).sort()) d.push({ field: k, issue: 'is not a supported field' })
+  const limit = creating ? 10 : 50
+  const spec = {}
+  for (const [key, lo, hi] of [['start', 1, 999], ['count', 1, limit]]) {
+    const v = body[key]
+    if (!Number.isInteger(v) || v < lo || v > hi) d.push({ field: key, issue: `must be an integer between ${lo} and ${hi}` })
+    else spec[key] = v
+  }
+  if (spec.start && spec.count && spec.start + spec.count - 1 > 999) d.push({ field: 'count', issue: 'numbers must stay within 999' })
+  for (const key of ['patient_prefix', 'nurse_prefix']) {
+    if (typeof body[key] !== 'string' || !TRAINING_PREFIX.test(body[key])) d.push({ field: key, issue: 'must be lowercase letters / digits starting with a letter (at most 30)' })
+    else spec[key] = body[key]
+  }
+  if (spec.patient_prefix && spec.patient_prefix === spec.nurse_prefix) d.push({ field: 'nurse_prefix', issue: 'must differ from patient_prefix' })
+  const domain = body.domain ?? 'demo.local'
+  if (typeof domain !== 'string' || !TRAINING_DOMAIN.test(domain) || domain.length > 100) d.push({ field: 'domain', issue: 'must be a domain such as demo.local' })
+  else spec.domain = domain
+  for (const key of ['patient_name_prefix', 'nurse_name_prefix']) {
+    const v = body[key]
+    if (typeof v !== 'string' || !v.trim() || v.trim().length > 40) d.push({ field: key, issue: 'is required (at most 40 characters)' })
+    else spec[key] = v.trim()
+  }
+  if (creating) {
+    if (body.confirm !== true) d.push({ field: 'confirm', issue: 'must be true' })
+    const problems = passwordProblems(body.password)
+    for (const p of problems) d.push({ field: 'password', issue: p })
+    if (!problems.length) spec.password = body.password
+  }
+  if (d.length) throw invalid(d, '教學帳號設定有誤')
+  return spec
+}
+function trainingPlan(spec, n) {
+  const nn = String(n).padStart(3, '0')
+  return { number: nn, patient_email: `${spec.patient_prefix}${nn}@${spec.domain}`, nurse_email: `${spec.nurse_prefix}${nn}@${spec.domain}`,
+    patient_name: `${spec.patient_name_prefix} ${nn}`, nurse_name: `${spec.nurse_name_prefix} ${nn}`, staff_code: `${spec.nurse_prefix}${nn}`.toUpperCase() }
+}
+function trainingClassify(plan) {
+  const nurse = state.accounts[plan.nurse_email]
+  const pat = state.accounts[plan.patient_email]
+  if (!nurse && !pat) {
+    if (state.patients.some((p) => !p.deleted && p.display_name === plan.patient_name)) return { status: 'conflict', reason: `已有名為「${plan.patient_name}」的病人` }
+    if (Object.values(state.accounts).some((a) => a.nurse_profile?.staff_code === plan.staff_code)) return { status: 'conflict', reason: `員工編號 ${plan.staff_code} 已被使用` }
+    return { status: 'new' }
+  }
+  if (!nurse || !pat) return { status: 'conflict', reason: '只有其中一個帳號已存在' }
+  const patient = state.patients.find((p) => p.id === pat.patient_id)
+  if (nurse.role !== 'nurse' || pat.role !== 'patient' || !patient) return { status: 'conflict', reason: '帳號已被其他角色使用' }
+  const active = activeAssignments(patient.id)
+  if (active.length === 1 && active[0].nurse_id === nurse.id && active[0].is_primary) return { status: 'exists', patient }
+  return { status: 'conflict', reason: '兩個帳號都存在，但照護關係不是這一組一對一主責', patient }
+}
+function trainingRow(plan, status, reason = null, patient = null) {
+  return { number: plan.number, patient_email: plan.patient_email, patient_name: plan.patient_name, patient_code: patient?.patient_code ?? null,
+    nurse_email: plan.nurse_email, nurse_name: plan.nurse_name, primary_assignment: ['created', 'exists'].includes(status), status, reason }
+}
+const trainingSummary = (rows, keys) => Object.fromEntries(keys.map((k) => [k, rows.filter((r) => r.status === k).length]))
+
+/** POST /admin/training-accounts/preview — read-only. */
+export function mockTrainingPreview(body = {}) {
+  current('admin')
+  const spec = trainingSpec(body, false)
+  const rows = []
+  for (let n = spec.start; n < spec.start + spec.count; n++) {
+    const plan = trainingPlan(spec, n)
+    const c = trainingClassify(plan)
+    rows.push(trainingRow(plan, c.status === 'new' ? 'will_create' : c.status, c.reason ?? null, c.patient))
+  }
+  return { data: { rows, summary: trainingSummary(rows, ['will_create', 'exists', 'conflict']) } }
+}
+
+/** POST /admin/training-accounts — up to 10 pairs; each pair is created as a whole (validated first). */
+export function mockTrainingCreate(body = {}) {
+  const admin = current('admin')
+  const spec = trainingSpec(body, true)
+  const rows = []
+  for (let n = spec.start; n < spec.start + spec.count; n++) {
+    const plan = trainingPlan(spec, n)
+    const c = trainingClassify(plan)
+    if (c.status !== 'new') { rows.push(trainingRow(plan, c.status, c.reason ?? null, c.patient)); continue }
+    const at = nowIso()
+    const nurse = { id: `mock-user-${uuid()}`, display_name: plan.nurse_name, email: plan.nurse_email, role: 'nurse', patient_id: null,
+      password: spec.password, must_change_password: false, is_active: true, last_login_at: null, created_at: at,
+      nurse_profile: { staff_code: plan.staff_code, department: '教學帳號', title: null } }
+    const p = { id: uuid(), patient_code: nextCode(), display_name: plan.patient_name, gender: null, date_of_birth: '1970-01-01', height_cm: null,
+      blood_type: null, allergies: null, baseline_ecog: null, timezone: TZ, is_demo: true, created_at: at, created_by: person(admin), deleted: false,
+      account_email: plan.patient_email, care_alerts: [], diagnoses: [], current_cycle: null }
+    state.accounts[plan.nurse_email] = nurse
+    state.patients.push(p)
+    register(p)
+    state.accounts[plan.patient_email] = { id: `mock-user-${uuid()}`, display_name: plan.patient_name, email: plan.patient_email, role: 'patient',
+      patient_id: p.id, password: spec.password, must_change_password: false, is_active: true, last_login_at: null, nurse_profile: null }
+    state.assignments.push({ id: nextId(), patient_id: p.id, nurse_id: nurse.id, is_primary: true, assigned_at: at, ended_at: null, assigned_by: person(admin) })
+    sync(p)
+    rows.push(trainingRow(plan, 'created', null, p))
+  }
+  save()
+  return { data: { rows, summary: trainingSummary(rows, ['created', 'exists', 'conflict', 'failed']) } }
+}
+
 /** Test / demo helper: forget every change (fresh seed). */
 export function resetMockCareTeam() {
   Object.assign(state, seed())
