@@ -139,18 +139,36 @@ async function endAssignment(a) {
 
 // ------------------------------------------------------------------ login account
 const accountEmail = ref('')
+const accountFormOpen = ref(false) // 尚未建立登入帳號 → [建立登入帳號] opens the form
+const accountError = ref('')
 const issued = ref(null) // { email, temporary_password } — shown once, local only
+/** POST /patients/{id}/account (existing API): login account for a patient who has none. */
 async function createAccount() {
-  let result = null
-  if (await act(async () => { result = await store.createAccount(id.value, accountEmail.value.trim()) })) {
-    issued.value = result
+  accountError.value = ''
+  const email = accountEmail.value.trim()
+  if (!email) {
+    accountError.value = '請輸入登入 email'
+    return
+  }
+  try {
+    issued.value = await store.createAccount(id.value, email)
     accountEmail.value = ''
+    accountFormOpen.value = false
+  } catch (e) {
+    const taken = (e.details ?? []).some((d) => d.issue === 'is already registered')
+    accountError.value = e.status === 409 ? (taken ? '這個 email 已經有帳號' : '這位病人已經有登入帳號')
+      : e.status === 400 ? '請輸入正確的 email'
+        : e.status === 404 ? '找不到資料，或您已經沒有這位病人的權限。' : e.message
+    if (e.status === 404 || (e.status === 409 && !taken)) await store.fetchPatient(id.value)
   }
 }
 
 async function load() {
   editing.value = false
   issued.value = null
+  accountFormOpen.value = false
+  accountError.value = ''
+  accountEmail.value = ''
   notice.value = ''
   actionError.value = ''
   const p = await store.fetchPatient(id.value)
@@ -387,25 +405,33 @@ dashboard.fetchSettings()
               :who="`${patient.display_name}（${patient.patient_code}）`"
               @done="issued = null"
             />
-            <dl v-if="patient.account.has_account" class="mt-3 grid grid-cols-[6rem_1fr] gap-y-2">
-              <dt class="text-ink-soft">帳號</dt><dd class="break-all">{{ patient.account.email }}</dd>
+            <!-- the account pair (v-if / v-else) stays together: nothing may sit between them -->
+            <dl v-if="patient.account.has_account" class="mt-3 grid grid-cols-[6rem_1fr] gap-y-2" data-account-info>
+              <dt class="text-ink-soft">帳號</dt><dd class="break-all" data-account-email>{{ patient.account.email }}</dd>
               <dt class="text-ink-soft">狀態</dt>
               <dd data-account-state>{{ !patient.account.is_active ? '已停用' : patient.account.must_change_password ? '尚未設定新密碼（仍是初始密碼）' : '使用中' }}</dd>
               <dt class="text-ink-soft">最後登入</dt><dd>{{ when(patient.account.last_login_at) }}</dd>
             </dl>
+            <div v-else class="mt-3" data-no-account>
+              <p class="text-ink-soft">尚未建立登入帳號。建立後系統會產生初始密碼，只顯示一次；病人第一次登入時必須設定新密碼。</p>
+              <button v-if="!accountFormOpen" type="button" class="mt-3 min-h-11 rounded-full border border-care px-5 font-bold text-care hover:bg-care-soft"
+                data-open-account-form @click="accountFormOpen = true; accountError = ''">建立登入帳號</button>
+              <form v-else class="mt-3 flex flex-wrap items-end gap-3" novalidate data-account-form @submit.prevent="createAccount">
+                <label class="block min-w-56 flex-1"><span class="text-sm font-medium">Email / 登入帳號</span>
+                  <input v-model="accountEmail" type="email" name="email" inputmode="email" autocomplete="off" placeholder="例如 patient02@demo.local"
+                    class="mt-1 block min-h-11 w-full rounded-xl border border-line px-3" :aria-invalid="!!accountError" />
+                </label>
+                <button type="submit" class="min-h-11 rounded-full bg-care px-5 font-bold text-white hover:bg-care/90 disabled:opacity-60" :disabled="!accountEmail.trim()">建立帳號</button>
+                <button type="button" class="min-h-11 rounded-full px-4 text-ink-soft hover:bg-mist" @click="accountFormOpen = false; accountError = ''; accountEmail = ''">取消</button>
+                <p v-if="accountError" class="w-full text-sm text-critical" role="alert" data-account-error>{{ accountError }}</p>
+              </form>
+            </div>
             <!-- the patient's own notification email (maintained by the patient; staff see it masked only) -->
             <dl v-if="patient.notification_contact" class="mt-3 grid grid-cols-[6rem_1fr] gap-y-2 border-t border-line pt-3" data-notification-contact>
               <dt class="text-ink-soft">通知 Email</dt><dd class="break-all" data-contact-email>{{ patient.notification_contact.email_masked ?? '未設定' }}</dd>
               <dt class="text-ink-soft">Email 驗證</dt><dd data-contact-verified>{{ patient.notification_contact.email_verified ? '已驗證' : '未驗證' }}</dd>
               <dt class="text-ink-soft">Email 通知</dt><dd data-contact-enabled>{{ patient.notification_contact.email_notification_enabled ? '開啟' : '關閉' }}</dd>
             </dl>
-            <form v-else class="mt-3 flex flex-wrap items-end gap-3" data-account-form @submit.prevent="createAccount">
-              <p class="w-full text-ink-soft">這位病人還沒有登入帳號。建立後系統會產生初始密碼，只顯示一次。</p>
-              <label class="block min-w-56 flex-1"><span class="text-sm font-medium">登入 email</span>
-                <input v-model="accountEmail" type="email" name="email" inputmode="email" autocomplete="off" class="mt-1 block min-h-11 w-full rounded-xl border border-line px-3" />
-              </label>
-              <button type="submit" class="min-h-11 rounded-full bg-care px-5 font-bold text-white hover:bg-care/90 disabled:opacity-60" :disabled="!accountEmail.trim()">建立帳號</button>
-            </form>
           </section>
         </div>
       </template>
