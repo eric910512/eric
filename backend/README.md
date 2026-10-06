@@ -49,6 +49,7 @@ python tests/test_labs.py            # 單一 suite 也可以直接執行
 | `test_patient_profile` | 病人基本資料：本人讀寫（通知 Email、身高、Email 通知開關）、登入 email 不變、不可改別人 / 護理師與管理者不可寫、員工只看到遮罩、Email 未驗證不能開啟通知、驗證連結（雜湊、24 小時、一次性、重寄 / 換 Email 後失效、限本人、429）、體重歷史（`vital_signs`，patient_app、病人為 actor）、BMI、既有 Risk Engine 讀到病人輸入的體重、沒有 Email 服務、稽核不含 Email / 連結 / token |
 | `test_email_delivery` | 護理師發通知 → App + Email：未設定 / 未驗證 / 關閉通知不寄、已驗證 + 開啟才寄（摘要，不含內容）、寄送失敗 / 逾時 / 例外仍 201 且通知不 rollback、處理流程不受影響、排程提醒 skipped、Idempotency replay 不重寄、非指派病人 404、病人 403、風險警示不寄、未設定服務 not_configured、capture 在 staging / production 被拒、時間軸不變、稽核不含地址 / 內容 / 服務商訊息 |
 | `test_email_modes` | Email 內容分級：none 不寄、summary（非敏感顯示標題 / 敏感用一般化標題、不含內容）、full（標題 + 內容）、敏感主題 full → 後端降級並記錄（delivery、稽核）、未指定 → clinical_other + summary、無效值 400、HTML escape / URL 不成連結 / 主旨單行、Email 不含 id / token / 密碼、病人關閉通知 / 排程 / 未設定服務、失敗不 rollback、replay 不重寄、狀態機與風險警示不變、驗證信不變 |
+| `test_rt_daily_report` | 每日症狀與自我照護回報：題目 / 區段 / 選項順序與文字、9 題必填、沒有 alert rule、送出與 option label、Idempotency replay、同日第二筆 409（只限這份表單、病人與護理師代填皆同、隔天可再填、標示錯誤後可再填、更正可）、驗證、護理端列表（form_code 篩選、權限）、待審摘要與審閱評估摘要的選項文字、既有 ≥ 7 規則、稽核、data migration 與 seed 一致、有回報時 downgrade 保留表單 |
 | `test_brevo_provider` | Brevo provider（不連網，替換 `urlopen`）：request 格式（URL、POST、`api-key` header、JSON body、timeout）、2xx / 202 / 4xx / 429 / 5xx / 逾時 / 網路錯誤的結果對應、factory 選擇與設定檢查（缺 key / 寄件者 / https）、Email 驗證連結指向 `APP_BASE_URL` 且 token 規則不變、通知先建立再寄送且 Brevo 失敗不 rollback、API key 不出現在 log / DB / 稽核 |
 | `test_patient_management` | Sprint 1：病人 CRUD、代碼產生與撞號、初始密碼與首次登入改密碼、指派 / 結束指派後的存取、角色權限、稽核、完整流程 |
 

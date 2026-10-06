@@ -128,6 +128,10 @@ export const useDashboardStore = defineStore('dashboard', {
           record = res.data.data
         }
       } catch (err) {
+        // mock mode throws the API's error (status / code / message) directly, like a response would
+        if (USE_MOCK && err?.status && err.code) {
+          throw { code: err.code, message: err.message, details: err.details ?? [], retryable: err.status >= 500 }
+        }
         const error = err.response?.data?.error
         throw {
           code: error?.code ?? (err.response ? 'UNKNOWN' : 'NETWORK'),

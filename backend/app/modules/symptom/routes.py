@@ -82,7 +82,8 @@ def create_record():
 def patient_records(patient_id):
     """A patient's symptom reports with review state (newest first).
 
-    ``patient_id`` is a public id or ``me``. Query: review_status=all|submitted|reviewed, page, per_page.
+    ``patient_id`` is a public id or ``me``. Query: review_status=all|submitted|reviewed, page, per_page,
+    form_code (optional: one form only, e.g. rt_daily_report).
     Patients see their own records without the nurse's internal note.
     """
     patient = resolve_patient(patient_id)
@@ -92,6 +93,7 @@ def patient_records(patient_id):
         review_status=query_choice(request.args, "review_status", "all", ("all", ReviewStatus.SUBMITTED, ReviewStatus.REVIEWED)),
         page=query_int(request.args, "page", 1, 1, 10_000),
         per_page=query_int(request.args, "per_page", 20, 1, 100),
+        form_code=request.args.get("form_code") or None,
     )
     record_patient_view(patient, resource_type="symptom_records")
     db.session.commit()

@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import func, select
 
 from app.core.api import APIError
-from app.core.timeutil import iso_utc, parse_observed_at, patient_zone, to_local
+from app.core.timeutil import iso_utc, local_day_bounds_utc, parse_observed_at, patient_zone, to_local
 from app.extensions import db
 from app.models import Notification, NursingAssessment, SymptomForm, SymptomRecord, SymptomRecordValue
 from app.models.base import utcnow
@@ -27,6 +27,9 @@ from app.services.treatment import active_plan_and_cycle, cycle_nadir
 
 MAX_TEXT = 1000
 MAX_NOTES = 2000
+# Forms a patient reports at most once per local day (a second report that day → 409). Other forms
+# (e.g. daily_chemo_check) can be reported again whenever symptoms change.
+ONCE_PER_DAY_FORMS = ("rt_daily_report",)
 
 # Which request key carries the answer for each value_type.
 ANSWER_KEY = {
@@ -62,6 +65,8 @@ def serialize_definition(d):
         "help_text": d.help_text,
         "value_type": d.value_type,
         "higher_is_worse": d.higher_is_worse,
+        # section of the form the question belongs to (the patient page groups by it)
+        "category": {"code": d.category.code, "name_zh": d.category.name_zh} if d.category else None,
     }
     if d.value_type in (SymptomValueType.SCALE, SymptomValueType.NUMERIC):
         data.update(
@@ -256,6 +261,8 @@ def create_symptom_record(patient, user, body, correction_of=None):
         if form_item.is_required and code not in seen and correction_of is None:
             errors.add("values", f"'{code}' is required")
     errors.raise_if_any()
+    if form.code in ONCE_PER_DAY_FORMS and correction_of is None:
+        _ensure_not_reported_today(patient, form, recorded_at)
 
     # Cycle context (database-design.md §4: cycle_day is computed by the server).
     zone = patient_zone(patient.timezone)
@@ -294,6 +301,25 @@ def create_symptom_record(patient, user, body, correction_of=None):
     return record, triggered
 
 
+def _ensure_not_reported_today(patient, form, recorded_at):
+    """One report of a once-per-day form per patient and local day (the patient's timezone).
+    Corrections (amend) and records marked entered-in-error do not count."""
+    zone = patient_zone(patient.timezone)
+    day = to_local(recorded_at, zone).date()
+    start, end = local_day_bounds_utc(day, zone)
+    existing = db.session.execute(
+        select(SymptomRecord.id).where(
+            SymptomRecord.patient_id == patient.id, SymptomRecord.form_id == form.id,
+            SymptomRecord.record_status == RecordStatus.FINAL,
+            SymptomRecord.recorded_at >= start, SymptomRecord.recorded_at < end,
+        ).limit(1)
+    ).scalar()
+    if existing is not None:
+        raise APIError(409, "ALREADY_REPORTED_TODAY", "今天已回報", [
+            {"field": "form_code", "issue": f"already reported on {day.isoformat()}", "record_id": existing},
+        ])
+
+
 def _alert_context(record, patient):
     """Inputs for rule conditions, derived from the record itself (same result on replay)."""
     local_day = to_local(record.recorded_at, patient_zone(patient.timezone)).date()
@@ -315,6 +341,7 @@ def serialize_value(v):
         data["value_boolean"] = v.value_boolean
     elif vtype == SymptomValueType.SINGLE_CHOICE:
         data["option_code"] = v.option.value_code if v.option else None
+        data["option_label"] = v.option.label_zh if v.option else None
     elif vtype == SymptomValueType.MULTI_CHOICE:
         data["option_codes"] = [o.value_code for o in v.selected_options]
     elif vtype == SymptomValueType.TEXT:
@@ -365,8 +392,11 @@ REVIEW_ASSESSMENT_TYPES = ("phone_follow_up", "follow_up")
 MAX_ACTION_NOTE = 2000
 
 
-def list_patient_records(patient, *, review_status, page, per_page):
-    filters = [SymptomRecord.patient_id == patient.id, SymptomRecord.record_status == RecordStatus.FINAL]
+def list_patient_records(patient, *, review_status, page, per_page, form_code=None):
+    base = [SymptomRecord.patient_id == patient.id, SymptomRecord.record_status == RecordStatus.FINAL]
+    if form_code:
+        base.append(SymptomRecord.form.has(SymptomForm.code == form_code))
+    filters = list(base)
     if review_status != "all":
         filters.append(SymptomRecord.review_status == review_status)
     total = db.session.execute(select(func.count()).select_from(SymptomRecord).where(*filters)).scalar()
@@ -378,7 +408,7 @@ def list_patient_records(patient, *, review_status, page, per_page):
     ).scalars().all()
     counts = dict(db.session.execute(
         select(SymptomRecord.review_status, func.count())
-        .where(SymptomRecord.patient_id == patient.id, SymptomRecord.record_status == RecordStatus.FINAL)
+        .where(*base)
         .group_by(SymptomRecord.review_status)
     ).all())
     meta = {
@@ -459,6 +489,9 @@ def _summary(record, zone):
         if v.definition.value_type == SymptomValueType.BOOLEAN:
             if v.value_boolean:
                 parts.append(f"有{v.definition.name_zh}")
+        elif v.definition.value_type == SymptomValueType.SINGLE_CHOICE:
+            if v.option:
+                parts.append(f"{v.definition.name_zh}：{v.option.label_zh}")
         elif v.score is not None:
             parts.append(f"{v.definition.name_zh} {float(v.score):g}")
     when = to_local(record.recorded_at, zone).strftime("%m/%d %H:%M")

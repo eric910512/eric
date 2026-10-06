@@ -6,10 +6,13 @@
  */
 import { ruleOn, threshold } from '@/mock/alertRules'
 import { nowIso } from '@/mock/clock'
-import { addMockSymptomRecord } from '@/mock/nurseReview'
+import { addMockSymptomRecord, mockListRecordsStore } from '@/mock/nurseReview'
 import { applyToRiskSummary, patientDashboards } from '@/mock/patientDashboards'
+import { MockApiError } from '@/mock/patients'
 
-const scale = (id, code, name, question) => ({
+const GENERAL = { code: 'general', name_zh: '全身症狀' }
+const GI = { code: 'gastrointestinal', name_zh: '腸胃症狀' }
+const scale = (id, code, name, question, category = GENERAL) => ({
   id,
   code,
   name_zh: name,
@@ -23,6 +26,7 @@ const scale = (id, code, name, question) => ({
   unit: null,
   min_label: '沒有',
   max_label: '最嚴重',
+  category,
 })
 
 export const mockForms = {
@@ -37,7 +41,7 @@ export const mockForms = {
     version: 1,
     items: [
       { display_order: 1, is_required: true, display_condition: null, definition: scale(1, 'pain', '疼痛', '過去 24 小時最嚴重的疼痛程度？') },
-      { display_order: 2, is_required: true, display_condition: null, definition: scale(2, 'nausea', '噁心', '過去 24 小時最嚴重的噁心程度？') },
+      { display_order: 2, is_required: true, display_condition: null, definition: scale(2, 'nausea', '噁心', '過去 24 小時最嚴重的噁心程度？', GI) },
       { display_order: 3, is_required: true, display_condition: null, definition: scale(3, 'fatigue', '疲倦', '過去 24 小時最嚴重的疲倦程度？') },
       {
         display_order: 4,
@@ -51,10 +55,38 @@ export const mockForms = {
           help_text: '化療期間發燒可能是嚴重感染的徵兆，請量體溫確認。',
           value_type: 'boolean',
           higher_is_worse: true,
+          category: GENERAL,
         },
       },
     ],
   },
+}
+
+// 每日症狀與自我照護回報 (= backend/app/seeds/rt_daily_report.py): texts and option order exactly as given
+const RT_CATEGORY = { code: 'rt_symptom_24h', name_zh: '過去 24 小時症狀自主管理' }
+const SELF_CARE = { code: 'daily_self_care', name_zh: '我的每日自評' }
+const choice = (id, code, text, category, worse, options) => ({
+  id, code, name_zh: text, question_text: text, help_text: null, value_type: 'single_choice', higher_is_worse: worse, category,
+  options: options.map(([value_code, label_zh, score], i) => ({ id: id * 10 + i, value_code, label_zh, score })),
+})
+const rtScale = (id, code, text) => ({ ...scale(id, code, text, text), min_label: null, max_label: null, category: RT_CATEGORY })
+const YES_NO = [['yes', '有', 1], ['no', '沒有', 0]]
+const RT_ITEMS = [
+  rtScale(101, 'rt_pain_skin', '疼痛－放射線皮膚發紅、脫皮導致'),
+  rtScale(102, 'rt_pain_oral', '疼痛－口腔黏膜紅腫、發炎導致'),
+  choice(103, 'rt_dermatitis_redness', '放射線皮膚炎－發紅情形', RT_CATEGORY, true, [['none', '無', 0], ['light', '淺紅、粉紅', 1], ['dark', '深紅', 2]]),
+  choice(104, 'rt_dermatitis_desquamation', '放射線皮膚炎－脫皮、脫屑情形', RT_CATEGORY, true,
+    [['none', '無', 0], ['dry', '乾燥、有脫皮脫屑', 1], ['moist', '潮濕、有脫皮脫屑', 2], ['bleeding', '有脫皮脫屑伴出血', 3]]),
+  rtScale(105, 'rt_appetite_poor', '食慾不佳'),
+  rtScale(106, 'rt_fatigue', '疲倦'),
+  choice(107, 'self_care_moisturizer', '我今天擦保濕乳液或醫師開的藥膏了嗎？', SELF_CARE, false, YES_NO),
+  choice(108, 'self_care_towel_pat', '我今天洗完澡有用毛巾「按壓」，沒有來回摩擦皮膚嗎？', SELF_CARE, false, YES_NO),
+  choice(109, 'self_care_mouth_rinse', '除了睡覺以外，我有每個小時，以及飯後都有確實漱口嗎？', SELF_CARE, false, YES_NO),
+]
+mockForms.rt_daily_report = {
+  id: 2, code: 'rt_daily_report', name: '每日症狀與自我照護回報', description: null, intended_for: 'patient', availability: 'always',
+  recall_period_hours: 24, version: 1,
+  items: RT_ITEMS.map((definition, i) => ({ display_order: i + 1, is_required: true, display_condition: null, definition })),
 }
 
 const rule = (code, name, definition, dflt, severity) => ({
@@ -80,8 +112,64 @@ function patientMessage(label, score, severity, isBoolean) {
 
 let nextId = 1000
 
+/**
+ * POST /symptoms/records for rt_daily_report (= create_symptom_record + the once-per-day rule): every
+ * question required, options / 0–10 validated, one report per patient per local day (409
+ * ALREADY_REPORTED_TODAY), no alert rule; the record reaches the nurse lists and the ≥ 7 risk summary.
+ */
+function submitMockDailyReport(patientId, body) {
+  const form = mockForms.rt_daily_report
+  const invalid = (details) => new MockApiError(400, 'VALIDATION_ERROR', '症狀回報內容有誤', details)
+  const given = Object.fromEntries((body.values ?? []).map((v) => [v.definition_code, v]))
+  const details = []
+  const values = []
+  for (const item of form.items) {
+    const def = item.definition
+    const v = given[def.code]
+    if (!v) { details.push({ field: 'values', issue: `'${def.code}' is required` }); continue }
+    if (def.value_type === 'scale') {
+      const n = v.value_numeric
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 10) { details.push({ field: `values.${def.code}.value_numeric`, issue: 'must be between 0 and 10' }); continue }
+      values.push({ definition_code: def.code, label: def.name_zh, value_numeric: n, score: n })
+    } else {
+      const opt = def.options.find((o) => o.value_code === v.option_code)
+      if (!opt) { details.push({ field: `values.${def.code}.option_code`, issue: 'is not a valid option' }); continue }
+      values.push({ definition_code: def.code, label: def.name_zh, option_code: opt.value_code, option_label: opt.label_zh, score: opt.score })
+    }
+  }
+  if (details.length) throw invalid(details)
+  const day = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date(iso))
+  const now = nowIso()
+  const existing = mockListRecordsStore(patientId).find((r) => r.form?.code === form.code && r.record_status === 'final' && day(r.recorded_at) === day(now))
+  if (existing) {
+    throw new MockApiError(409, 'ALREADY_REPORTED_TODAY', '今天已回報',
+      [{ field: 'form_code', issue: `already reported on ${day(now)}`, record_id: existing.id }])
+  }
+  const w = patientDashboards[patientId]?.widgets
+  const cycleDay = w?.['treatment-progress']?.current_cycle?.cycle_day ?? null
+  const id = nextId++
+  addMockSymptomRecord(patientId, { id, recorded_at: now, cycle_day: cycleDay, form: { code: form.code, version: form.version }, values: structuredClone(values), alerts: [] })
+  if (w) {
+    const nv = w['nurse-view']
+    const scored = [...values].sort((a, b) => b.score - a.score)
+    nv.pending_symptom_reviews.count += 1
+    nv.pending_symptom_reviews.items.unshift({
+      id, recorded_at: now, cycle_day: cycleDay, max_score: scored[0]?.score ?? null,
+      summary: scored.map((v) => (v.option_label !== undefined ? `${v.label}：${v.option_label}` : `${v.label} ${v.score}`)).join('、'),
+    })
+    nv.last_report_at = now
+    nv.hours_since_last_report = 0
+    applyToRiskSummary(w, { symptoms: values.filter((v) => v.value_numeric !== undefined).map((v) => ({ label: v.label, score: v.score })), alerts: [], at: now })
+  }
+  return {
+    id, patient_id: patientId, form: { code: form.code, version: form.version }, recorded_at: now, cycle_day: cycleDay, source: 'patient_app',
+    review_status: 'submitted', record_status: 'final', amends_id: null, notes: null, values, triggered_alerts: [],
+  }
+}
+
 /** Apply a report to the in-memory mock dashboard so the UI updates like it would with the API. */
 export function submitMockReport(patientId, body) {
+  if (body.form_code === 'rt_daily_report') return submitMockDailyReport(patientId, body)
   const dashboard = patientDashboards[patientId]
   if (!dashboard) throw new Error('找不到這位病人的示範資料')
   const w = dashboard.widgets

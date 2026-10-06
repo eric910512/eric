@@ -24,6 +24,11 @@ const error = ref(null)
 const form = reactive({ action_note: '', assessment_type: 'phone_follow_up', resolve_alerts: true, grades: {} })
 
 const scaleValues = computed(() => props.record.values.filter((v) => v.value_numeric !== undefined))
+// single-choice answers (e.g. 每日症狀與自我照護回報): shown as answers only — "needs attention" is the
+// existing score >= 7 rule of the 0–10 questions, no rule for options
+const choiceValues = computed(() => props.record.values.filter((v) => v.option_label !== undefined))
+const FORM_NAME = { rt_daily_report: '每日症狀與自我照護回報' }
+const formName = computed(() => FORM_NAME[props.record.form?.code] ?? null)
 const fever = computed(() => props.record.values.find((v) => v.definition_code === 'fever'))
 const openAlerts = computed(() => props.record.alerts.filter((a) => !a.resolved))
 const reviewed = computed(() => props.record.review_status === 'reviewed')
@@ -67,6 +72,7 @@ async function submit() {
       <p class="font-bold">{{ formatWhen(record.recorded_at, today, timezone) }}</p>
       <p v-if="record.cycle_day" class="text-sm text-ink-soft">療程第 {{ record.cycle_day }} 天</p>
       <p class="text-sm text-ink-soft">{{ record.source === 'nurse' ? '護理師代填' : '病人自評' }}</p>
+      <p v-if="formName" class="text-sm font-medium text-care" data-record-form>{{ formName }}</p>
       <span
         class="ml-auto rounded-full px-2.5 py-0.5 text-sm font-bold"
         :class="reviewed ? 'bg-ok-soft text-ok' : 'bg-warn-soft text-warn'"
@@ -79,7 +85,9 @@ async function submit() {
         :key="v.definition_code"
         class="rounded-lg px-3 py-1"
         :class="v.score >= 7 ? 'bg-action font-bold text-action-ink' : 'bg-mist'"
-      >{{ v.label }} {{ v.score }}</li>
+        :data-attention="v.score >= 7 ? 'true' : null"
+      >{{ v.label }} {{ v.score }}<span v-if="v.score >= 7" class="sr-only">（需要注意）</span></li>
+      <li v-for="v in choiceValues" :key="v.definition_code" class="rounded-lg bg-mist px-3 py-1" data-choice-answer>{{ v.label }}：{{ v.option_label }}</li>
       <li
         v-if="fever"
         class="rounded-lg px-3 py-1"
