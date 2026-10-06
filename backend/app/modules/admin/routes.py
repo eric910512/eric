@@ -11,6 +11,7 @@ from app.models import AuditLog
 from app.models.enums import AuditAction, AuditCategory, AuditOutcome, RoleName
 from app.modules.admin import admin_bp
 from app.modules.admin import services as s
+from app.modules.admin import training
 from app.modules.auth import sessions
 from app.modules.patient import management as m
 
@@ -123,3 +124,26 @@ def settings():
     """Institution information and security policy (read-only in Phase 1: from the config file)."""
     return ok(s.settings())
 
+
+
+# ------------------------------------------------------------------ training (demo) accounts
+
+
+@admin_bp.post("/training-accounts/preview")
+@require_auth(RoleName.ADMIN)
+def training_preview():
+    """Plan a batch of numbered training pairs (nurse + patient with login + primary assignment):
+    ``{start, count ≤ 50, patient_prefix, nurse_prefix, domain?, patient_name_prefix, nurse_name_prefix}``.
+    Read-only: per number ``will_create`` / ``exists`` / ``conflict``. Development / staging only."""
+    training.ensure_allowed()
+    return ok(training.preview(_body()))
+
+
+@admin_bp.post("/training-accounts")
+@require_auth(RoleName.ADMIN)
+def training_create():
+    """Create up to 10 pairs per request (same fields as the preview, plus ``password`` and ``confirm: true``).
+    Each pair is atomic; existing accounts are never changed. The password is not returned.
+    Development / staging only (403 TRAINING_ACCOUNTS_DISABLED in production)."""
+    training.ensure_allowed()
+    return ok(training.create(_body(), g.current_user), status=201)

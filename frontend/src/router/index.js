@@ -8,6 +8,7 @@ import AdminHome from '@/views/AdminHome.vue'
 import AdminNurses from '@/views/AdminNurses.vue'
 import AdminRules from '@/views/AdminRules.vue'
 import AdminSettings from '@/views/AdminSettings.vue'
+import AdminTrainingAccounts from '@/views/AdminTrainingAccounts.vue'
 import CareTimeline from '@/views/CareTimeline.vue'
 import ChangePassword from '@/views/ChangePassword.vue'
 import ComingSoon from '@/views/ComingSoon.vue'
@@ -156,6 +157,12 @@ export const router = createRouter({
       name: 'admin-accounts',
       component: AdminAccounts,
       meta: { title: '帳號狀態', requiresAuth: true, roles: ['admin'] },
+    },
+    {
+      path: '/admin/training-accounts', // development / staging only (the API refuses in production)
+      name: 'admin-training',
+      component: AdminTrainingAccounts,
+      meta: { title: '批量建立教學帳號', requiresAuth: true, roles: ['admin'] },
     },
     {
       path: '/admin/audit',
