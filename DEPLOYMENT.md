@@ -81,7 +81,7 @@ Migration 在 start command 執行（Free 方案沒有 pre-deploy command 與 Sh
 | **`EMAIL_PROVIDER`** | **手動輸入** `brevo`（啟用 Email 時） | 病人通知 Email。不設定 = `disabled`：不寄任何信，通知的 Email 記為 `skipped / not_configured`，App 通知照常，病人無法完成 Email 驗證。`brevo` = Brevo Transactional Email API。`capture`（開發測試用）在 staging / production 會被拒絕啟動 |
 | **`EMAIL_API_KEY`** | **手動輸入**：Brevo API key（secret） | 只在 Dashboard → Environment 輸入；**不要寫進 `render.yaml`、程式、README 或任何檔案**。`EMAIL_PROVIDER=brevo` 時缺少會拒絕啟動 |
 | **`EMAIL_FROM`** | **手動輸入**：Brevo 已驗證的寄件者 Email | 寄件者網域 / 地址必須先在 Brevo 驗證，否則 Brevo 拒收（寄送記為 `failed / PROVIDER_REJECTED`）。缺少會拒絕啟動 |
-| `EMAIL_FROM_NAME` | 選填（預設「化療照護」） | 寄件者名稱 |
+| `EMAIL_FROM_NAME` | 選填（預設「癌症照護系統」） | 寄件者名稱（Render 上若已設定為其他值，會沿用設定值） |
 | **`APP_BASE_URL`** | **手動輸入**：前端 https 網址，例 `https://cancer-care-web.onrender.com`（結尾不要 `/`） | Email 驗證連結與通知 Email 的網址；`brevo` 時不是 https 會拒絕啟動 |
 | `EMAIL_TIMEOUT_SECONDS` | 選填（預設 `10`） | 每次呼叫 Brevo 的 timeout（寄信在 request 中同步執行，沒有重試） |
 

@@ -11,7 +11,9 @@ notification, never a second state machine.
   lifecycle (``notifications.status``).
 - Only reminders written by staff are emailed. Risk alerts are not; scheduled reminders are
   recorded as skipped / ``scheduled`` (no background scheduler).
-- The email is a summary without the notification content (templates.notification_email).
+- What the email may contain follows email_policy.py: the nurse's topic and mode (none / summary /
+  full); ``full`` for a sensitive topic is downgraded to ``summary`` here — whatever the client sent.
+  The topic, requested and applied mode are kept on the delivery row.
 - Nothing is sent unless the contact email is verified and email notifications are on.
 """
 
@@ -20,13 +22,16 @@ from app.core.timeutil import iso_utc
 from app.extensions import db
 from app.models import NotificationDelivery
 from app.models.base import utcnow
-from app.models.enums import AuditAction, DeliveryChannel, DeliverySkipReason, DeliveryStatus
+from app.models.enums import AuditAction, DeliveryChannel, DeliverySkipReason, DeliveryStatus, EmailMode
+from app.modules.notification import email_policy
 from app.services.email import get_email_service, send_email
 from app.services.email.base import NOT_CONFIGURED, SENT
 from app.services.email.templates import mask_email, notification_email
 
 
-def _skip_reason(n, contact, service, now):
+def _skip_reason(n, contact, service, now, mode):
+    if mode == EmailMode.NONE:
+        return DeliverySkipReason.NOT_REQUESTED
     if n.scheduled_for is not None and n.scheduled_for > now:
         return DeliverySkipReason.SCHEDULED
     if not service.available:
@@ -40,14 +45,17 @@ def _skip_reason(n, contact, service, now):
     return None
 
 
-def plan_email(n, patient):
-    """Decide, inside the notification's transaction, whether the email will be sent."""
+def plan_email(n, patient, category=None, requested_mode=None):
+    """Decide, inside the notification's transaction, whether and how the email will be sent
+    (content policy applied here: a sensitive topic never gets ``full``)."""
     now = utcnow()
     service = get_email_service()
     contact = patient.contact
-    reason = _skip_reason(n, contact, service, now)
+    category, requested, mode = email_policy.resolve(category, requested_mode)
+    reason = _skip_reason(n, contact, service, now, mode)
     delivery = NotificationDelivery(
         notification=n, channel=DeliveryChannel.EMAIL,
+        content_category=category, email_mode_requested=requested, email_mode=mode,
         status=DeliveryStatus.SKIPPED if reason else DeliveryStatus.PENDING, skip_reason=reason,
         provider=service.name, recipient_masked=mask_email(contact.email if contact else None),
         completed_at=now if reason else None,
@@ -68,7 +76,12 @@ def dispatch(delivery):
     contact = patient.contact if patient else None
     try:
         delivery.attempted_at = utcnow()
-        result = send_email(notification_email(contact.email, n.sent_at or n.created_at, patient.timezone))
+        mode = delivery.email_mode or EmailMode.SUMMARY  # NULL: rows from before the policy (summary)
+        title = n.title if mode == EmailMode.FULL else email_policy.email_title(delivery.content_category, n.title)
+        result = send_email(notification_email(
+            contact.email, mode=mode, title=title, message=n.message,
+            sent_at=n.sent_at or n.created_at, timezone_name=patient.timezone,
+        ))
         delivery.completed_at = utcnow()
         if result.status == SENT:
             delivery.status = DeliveryStatus.SENT
@@ -101,6 +114,10 @@ def delivery_payload(d):
         "skip_reason": d.skip_reason,
         "error_code": d.error_code,
         "recipient_masked": d.recipient_masked,
+        "category": d.content_category,
+        "mode_requested": d.email_mode_requested,
+        "mode": d.email_mode,
+        "downgraded": d.email_mode_requested == EmailMode.FULL and d.email_mode == EmailMode.SUMMARY,
         "attempted_at": iso_utc(d.attempted_at),
         "completed_at": iso_utc(d.completed_at),
     }

@@ -60,6 +60,7 @@ const GROUPS = [
   { suites: ['reminders'] },
   { suites: ['sessions'] },
   { suites: ['profile-email'] },
+  { suites: ['email-modes'] },
   // 1-minute access tokens (the existing JWT_ACCESS_TOKEN_MINUTES setting): real expiry → refresh
   { suites: ['refresh'], env: { JWT_ACCESS_TOKEN_MINUTES: '1' } },
   ...(PROD ? [{ suites: ['deploy'] }] : []),

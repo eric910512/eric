@@ -7,13 +7,14 @@
  *
  * Same test hook as the capture provider: a notification email to an address whose local part
  * ends with `+fail` fails (PROVIDER_REJECTED); `+timeout` fails with TIMEOUT. Verification emails
- * to those addresses succeed. Same texts as app/services/email/templates.py (summary only: never
- * the notification's title or message).
+ * to those addresses succeed. Same texts and HTML as app/services/email/templates.py: `summary` (the
+ * nurse's title only for non-sensitive topics, never the content) or `full` (title + content); the mode
+ * and title are decided by the caller with the content policy (`@/utils/emailPolicy`).
  */
 import { nowIso } from '@/mock/clock'
 
 const OUTBOX_KEY = 'ccp.mock.email-outbox'
-const SYSTEM = '化療照護'
+const SYSTEM = '癌症照護系統'
 const SECURITY_NOTE = '安全提醒：本系統不會在 Email 中要求您提供密碼或驗證碼，也不會附上檔案。如果您沒有使用本系統，請忽略這封信。此信件由系統自動發送，請勿直接回覆。'
 
 function load() {
@@ -53,11 +54,11 @@ const localTime = (iso) => new Date(iso).toLocaleString('sv-SE', { timeZone: 'As
 export const mockEmailAvailable = true
 
 /** send(message) → { status: sent | failed, provider_message_id, error_code }. Never throws. */
-export function mockSendEmail({ to, subject, text, purpose }) {
+export function mockSendEmail({ to, subject, text, purpose, html = null }) {
   const mode = failureMode(to, purpose)
   const status = mode ? 'failed' : 'sent'
   const id = `mock-email-${crypto.randomUUID()}`
-  outbox.push({ id, to, subject, text, purpose, status, at: nowIso() })
+  outbox.push({ id, to, subject, text, purpose, html, status, at: nowIso() })
   save()
   if (mode === 'timeout') return { status: 'failed', provider_message_id: null, error_code: 'TIMEOUT' }
   if (mode === 'fail') return { status: 'failed', provider_message_id: null, error_code: 'PROVIDER_REJECTED' }
@@ -72,11 +73,40 @@ export function verificationEmail(to, link, hours, now) {
   }
 }
 
-export function notificationEmail(to, sentAt) {
+const escapeHtml = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;')
+/** Escaped text with `://` broken by a zero-width space so mail clients do not auto-link nurse URLs. */
+const defang = (escaped) => escaped.replaceAll('://', ':/\u200b/')
+const subjectText = (value, limit = 120) => {
+  const line = String(value).split(/\s+/).filter(Boolean).join(' ')
+  return line.length <= limit ? line : `${line.slice(0, limit - 1)}…`
+}
+
+function htmlBody(paragraphs, label, url) {
+  const parts = paragraphs.map((item) => (Array.isArray(item)
+    ? `<p style="margin:0 0 16px"><strong>${escapeHtml(item[0])}</strong><br>${String(item[1]).split('\n').map((l) => defang(escapeHtml(l))).join('<br>')}</p>`
+    : `<p style="margin:0 0 16px">${defang(escapeHtml(item))}</p>`))
+  const button = `<p style="margin:24px 0"><a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 24px;border-radius:999px;background:#1f5f7a;color:#ffffff;text-decoration:none;font-weight:bold">${escapeHtml(label)}</a></p>`
+  const note = `<p style="margin:24px 0 0;font-size:13px;color:#666">${escapeHtml(SECURITY_NOTE)}</p>`
+  return `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#222">${parts.join('')}${button}${note}</div>`
+}
+
+/**
+ * `summary` or `full` email of a nurse-sent notification (= templates.notification_email). `mode` is the
+ * mode the policy allows; for a summary `title` is the title the email may show (generic for sensitive topics).
+ */
+export function notificationEmail(to, { mode, title, message, sentAt }) {
+  const when = localTime(sentAt)
+  const url = `${location.origin}/patient/notifications`
+  const login = `登入${SYSTEM}`
+  const paragraphs = mode === 'full'
+    ? ['您好，', '您有一則來自護理團隊的新通知。', ['標題：', title], ['內容：', message], ['發送時間：', when]]
+    : ['您好，', '您有一則來自護理團隊的新通知。', ['通知標題：', title], ['發送時間：', when], `為保護您的醫療資訊，完整內容請登入${SYSTEM}查看。`]
+  const lines = paragraphs.flatMap((item) => (Array.isArray(item) ? [item[0], ...String(item[1]).split('\n'), ''] : [item, '']))
   return {
-    to, purpose: 'notification', subject: `【${SYSTEM}】您有一則新的通知`,
-    text: [SYSTEM, '', '您有一則來自護理團隊的新通知。', `發送時間：${localTime(sentAt)}`, '', `請登入${SYSTEM} App / 網頁查看詳細內容：`,
-      `${location.origin}/`, '', '如不想再收到 Email 通知，可以在「我的」頁面關閉「接收 Email 通知」。', '', SECURITY_NOTE].join('\n'),
+    to, purpose: 'notification',
+    subject: mode === 'full' ? subjectText(`${SYSTEM}｜${title}`) : `${SYSTEM}｜您有一則新通知`,
+    text: [...lines, `${login}：`, url, '', SECURITY_NOTE].join('\n'),
+    html: htmlBody(paragraphs, login, url),
   }
 }
 

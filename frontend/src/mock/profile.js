@@ -17,6 +17,7 @@ import { nowIso } from '@/mock/clock'
 import { maskEmail, mockEmailAvailable, mockSendEmail, notificationEmail, verificationEmail } from '@/mock/email'
 import { MockApiError, mockAccessPatient, mockCurrentUser, mockPatientAccount, mockPatientRecord, saveMockCareTeam } from '@/mock/patients'
 import { mockTimelineVitals } from '@/mock/records'
+import { allowsFull, GENERIC_EMAIL_TITLE, resolveEmailMode } from '@/utils/emailPolicy'
 
 const TOKENS_KEY = 'ccp.mock.email-verification'
 const PATIENT_FIELDS = ['email', 'height_cm', 'email_notification_enabled']
@@ -208,16 +209,22 @@ function skipReason(p, scheduledFor) {
   return null
 }
 
-/** Plan and send the email of a new reminder; returns its `email_delivery`. Never throws. */
-export function mockDeliverReminderEmail(patientId, { scheduledFor = null, sentAt }) {
+/**
+ * Plan and send the email of a new reminder; returns its `email_delivery`. Never throws. The content
+ * policy (`@/utils/emailPolicy`, = email_policy.py) is applied here: a sensitive topic never gets `full`.
+ */
+export function mockDeliverReminderEmail(patientId, { scheduledFor = null, sentAt, category = null, emailMode = null, title, message }) {
   const p = mockPatientRecord(patientId)
-  const reason = skipReason(p, scheduledFor)
+  const policy = resolveEmailMode(category, emailMode)
+  const reason = policy.mode === 'none' ? 'not_requested' : skipReason(p, scheduledFor)
   const c = p ? contactOf(p) : null
   const delivery = { channel: 'email', status: reason ? 'skipped' : 'pending', skip_reason: reason, error_code: null,
-    recipient_masked: maskEmail(c?.email ?? null), attempted_at: null, completed_at: reason ? nowIso() : null }
+    recipient_masked: maskEmail(c?.email ?? null), category: policy.category, mode_requested: policy.requested, mode: policy.mode,
+    downgraded: policy.requested === 'full' && policy.mode === 'summary', attempted_at: null, completed_at: reason ? nowIso() : null }
   if (reason) return delivery
   delivery.attempted_at = nowIso()
-  const result = mockSendEmail(notificationEmail(c.email, sentAt))
+  const emailTitle = policy.mode === 'full' || allowsFull(policy.category) ? title : GENERIC_EMAIL_TITLE
+  const result = mockSendEmail(notificationEmail(c.email, { mode: policy.mode, title: emailTitle, message, sentAt }))
   delivery.completed_at = nowIso()
   delivery.status = result.status
   delivery.error_code = result.error_code

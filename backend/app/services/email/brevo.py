@@ -69,7 +69,7 @@ class BrevoEmailService(EmailService):
             "to": [{"email": message.to}],
             "subject": message.subject,
             "textContent": message.text,
-            "htmlContent": _html(message.text),
+            "htmlContent": message.html or _html(message.text),  # template HTML: nurse text never linked
             "tags": [message.purpose],
         }
 
