@@ -204,7 +204,10 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   await setValue(p, 'input[name=confirm_password]', 'E2eNewPass1')
   await p.click('[data-change-password] button[type=submit]')
   check(`${mode} patient: password set → own dashboard`, await waitPath(p, /^\/patient$/) && await waitText(p, `測試病人 E2E${mode}`))
-  check(`${mode} patient: new patient's dashboard renders (no data yet)`, await waitText(p, '今天的症狀'))
+  check(`${mode} patient: new patient's dashboard renders (no data yet)`, await waitText(p, '每日症狀與自我照護回報') && await waitText(p, '近兩週症狀'))
+  // 今天的症狀 lives on 其他症狀回報 (/patient/symptoms) since 2026-10
+  await p.evaluate(() => [...document.querySelectorAll('nav[aria-label=主要功能] a')].find((a) => a.innerText.trim() === '其他症狀回報').click())
+  await waitText(p, '今天的症狀')
   await clickText(p, '開始回報', 'button')
   await p.waitForFunction(() => document.querySelectorAll('fieldset').length >= 4, { timeout: 8000 })
   await answer(p, '疼痛', 9)

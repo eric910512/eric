@@ -167,6 +167,38 @@ function submitMockDailyReport(patientId, body) {
   }
 }
 
+const SELF_CARE_CATEGORY = SELF_CARE.code
+const taipeiDay = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date(iso))
+
+/**
+ * Dashboard widgets daily-report + self-care-stamps (= daily_report_widget / self_care_stamps_widget):
+ * today's state by the same once-per-day rule as submitMockDailyReport, and this month's 有／沒有
+ * answers per self-care question; a day without a report stays null (never "no").
+ */
+export function mockDailyReportWidgets(patientId) {
+  const form = mockForms.rt_daily_report
+  const today = taipeiDay(nowIso())
+  const reports = mockListRecordsStore(patientId)
+    .filter((r) => r.form?.code === form.code && r.record_status === 'final')
+    .sort((a, b) => Date.parse(a.recorded_at) - Date.parse(b.recorded_at))
+  const todays = reports.filter((r) => taipeiDay(r.recorded_at) === today).at(-1)
+  const [y, m] = today.split('-').map(Number)
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const dates = Array.from({ length: last }, (_, i) => `${today.slice(0, 8)}${String(i + 1).padStart(2, '0')}`)
+  const answers = {} // `${code}|${date}` → option code; later reports overwrite earlier ones
+  for (const r of reports) {
+    for (const v of r.values ?? []) if (v.option_code) answers[`${v.definition_code}|${taipeiDay(r.recorded_at)}`] = v.option_code
+  }
+  const questions = form.items.map((i) => i.definition).filter((d) => d.category?.code === SELF_CARE_CATEGORY)
+  return {
+    'daily-report': { form: { code: form.code, name: form.name }, date: today, reported_today: !!todays, today_record_id: todays?.id ?? null },
+    'self-care-stamps': {
+      month: today.slice(0, 7), date: today, from: dates[0], to: dates.at(-1),
+      items: questions.map((d) => ({ code: d.code, label: d.name_zh, days: dates.map((date) => ({ date, answer: answers[`${d.code}|${date}`] ?? null })) })),
+    },
+  }
+}
+
 /** Apply a report to the in-memory mock dashboard so the UI updates like it would with the API. */
 export function submitMockReport(patientId, body) {
   if (body.form_code === 'rt_daily_report') return submitMockDailyReport(patientId, body)

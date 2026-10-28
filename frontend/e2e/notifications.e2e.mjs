@@ -147,9 +147,11 @@ console.log('\n===== MOCK =====')
   const dash = await n.evaluate(() => document.body.innerText)
   check('MOCK: dashboard alert list shows lifecycle status and the center link', dash.includes('已接手・測試護理師 林') && dash.includes('在通知中心開啟'))
 
+  // 2026-10: notifications are no longer on the patient home page — the 通知 tab lists them
   const p = await login(base, 'patient02@demo.local', phone)
-  await p.waitForSelector('#w-my-notifications')
-  const card = await text(p, '#w-my-notifications')
+  await p.goto(base + '/patient/notifications', { waitUntil: 'networkidle0' })
+  await p.waitForSelector('[data-notification]')
+  const card = await text(p, 'main')
   check('MOCK: patient notification shows reminder + handling status', card.includes('體溫偏高') && card.includes('護理團隊已收到通知'), card.replace(/\n/g, ' | '))
   check('MOCK: patient has no lifecycle buttons', !(await p.evaluate(() => [...document.querySelectorAll('button')].some((b) => /接手|開始處理|完成處理/.test(b.innerText)))))
   await p.goto(base + '/nurse/notifications', { waitUntil: 'networkidle0' })
@@ -173,11 +175,13 @@ console.log('\n===== API =====')
     api(`/notifications/${patientCopy.id}/${a}`, pt, { method: 'POST', body: JSON.stringify({ resolution_note: 'x' }) })))
   check('API: patient POST acknowledge / start / resolve → 403', denied.every((r) => r.status === 403), denied.map((r) => r.status).join(','))
   const p = await login(base, 'patient01@demo.local', phone)
-  await p.waitForSelector('#w-my-notifications')
+  await p.goto(base + '/patient/notifications', { waitUntil: 'networkidle0' })
+  await p.waitForSelector(`[data-notification="${patientCopy.id}"]`)
   check('API: patient UI has no lifecycle buttons', !(await p.evaluate(() => [...document.querySelectorAll('button')].some((b) => /接手|開始處理|完成處理/.test(b.innerText)))))
   const patientStatus = async () => {
-    await p.reload({ waitUntil: 'networkidle0' }); await p.waitForSelector('#w-my-notifications'); await sleep(200)
-    return p.$eval('#w-my-notifications', (el) => [...el.querySelectorAll('li')].find((li) => li.innerText.includes('化療期間請不要等待'))?.querySelector('[data-status]')?.innerText.trim())
+    await p.reload({ waitUntil: 'networkidle0' }); await p.waitForSelector(`[data-notification="${patientCopy.id}"]`); await sleep(200)
+    // collapsed row: "<time>・<status text>"
+    return p.$eval(`[data-notification="${patientCopy.id}"] button .text-sm`, (el) => el.innerText.split('・').at(-1).trim())
   }
 
   const seen = {}
@@ -196,7 +200,7 @@ console.log('\n===== API =====')
   const pd = (await api(`/notifications/${patientCopy.id}`, pt)).body.data
   check('API: patient never sees the internal note or nurse name (page + API)', !page.includes('已電話聯繫病人') && !JSON.stringify(pd).includes('已電話聯繫病人')
     && !JSON.stringify(pd).includes('測試護理師'))
-  await p.screenshot({ path: `${OUT}/notif-API-patient.png`, clip: await p.$eval('#w-my-notifications', (el) => { const r = el.getBoundingClientRect(); return { x: 0, y: r.y + scrollY - 8, width: 390, height: r.height + 16 } }) })
+  await p.screenshot({ path: `${OUT}/notif-API-patient.png`, clip: await p.$eval('main', (el) => { const r = el.getBoundingClientRect(); return { x: 0, y: r.y + scrollY - 8, width: 390, height: r.height + 16 } }) })
 }
 
 check('no page errors / console errors', errors.length === 0, errors.join(' || ').slice(0, 300))

@@ -2,6 +2,7 @@
 shaped like the corresponding widget data endpoint in api-design.md v1.1 §8.
 """
 
+import calendar
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -27,12 +28,14 @@ from app.services.treatment import active_plan_and_cycle as _active_plan_and_cyc
 from app.services.treatment import cycle_nadir as _cycle_nadir
 from app.modules.labs.services import latest_by_test, patient_summary as lab_patient_summary
 from app.modules.notification.services import PATIENT_STATUS_TEXT
+from app.modules.symptom.services import final_record_on_day
 from app.services.labs import format_value as format_lab_value
 from app.services.vitals import flag as _flag
 from app.services.vitals import flags_for as _vital_flags
 from app.models.enums import (
     AlertSeverity,
     AppointmentStatus,
+    AppointmentType,
     CycleStatus,
     NotificationStatus,
     NotificationType,
@@ -66,6 +69,12 @@ TRENDABLE_TYPES = (
     SymptomValueType.NUMERIC,
     SymptomValueType.SINGLE_CHOICE,
 )
+# 每日症狀與自我照護回報 (app/seeds/rt_daily_report.py): the home page's report entry and the
+# self-care stamp cards. Self-care answers are 有／沒有, not scores, so they stay off the trend chart.
+DAILY_REPORT_FORM = "rt_daily_report"
+SELF_CARE_CATEGORY = "daily_self_care"
+# radiotherapy sessions that never happen (the reschedule's new appointment is counted instead)
+RADIATION_NOT_COUNTED = (AppointmentStatus.CANCELLED, AppointmentStatus.RESCHEDULED)
 FLAG_RANK = {None: 0, "warning": 1, "critical": 2}
 RISK_RANK = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2}
 
@@ -112,6 +121,9 @@ def build_patient_dashboard(patient, trend_days=14, viewer_role=None):
         "lab-summary": lab_patient_summary(patient),
         "symptom-trend": symptom_trend_widget(ctx, trend_days),
         "symptom-quick-report": symptom_quick_report_widget(ctx),
+        "daily-report": daily_report_widget(ctx),
+        "self-care-stamps": self_care_stamps_widget(ctx),
+        "radiation-progress": radiation_progress_widget(ctx),
         "notifications": notifications_widget(ctx),
     }
     if viewer_role != RoleName.PATIENT:
@@ -363,6 +375,8 @@ def symptom_trend_widget(ctx, days):
         definition = definitions.get(def_id)
         if definition is None or definition.value_type not in TRENDABLE_TYPES:
             continue
+        if definition.category is not None and definition.category.code == SELF_CARE_CATEGORY:
+            continue  # 有／沒有 answers: shown as stamp cards (self-care-stamps), not as a score line
         series.append({
             "key": definition.code,
             "label": definition.name_zh,
@@ -422,6 +436,113 @@ def symptom_quick_report_widget(ctx):
             {"id": last.id, "recorded_at": iso_utc(last.recorded_at), "cycle_day": last.cycle_day}
             if last else None
         ),
+    }
+
+
+def _daily_report_form():
+    return db.session.execute(select(SymptomForm).filter_by(code=DAILY_REPORT_FORM, is_active=True)).scalar_one_or_none()
+
+
+def daily_report_widget(ctx):
+    """Home entry to 每日症狀與自我照護回報: whether today (patient's local day) is already reported,
+    by the same rule that rejects a second report that day (final_record_on_day)."""
+    form = _daily_report_form()
+    record_id = final_record_on_day(ctx.patient, form, ctx.today) if form else None
+    return {
+        "form": {"code": form.code, "name": form.name} if form else None,
+        "date": iso_date(ctx.today),
+        "reported_today": record_id is not None,
+        "today_record_id": record_id,
+    }
+
+
+def self_care_stamps_widget(ctx):
+    """Self-care stamp cards for the current month (patient's local calendar): per self-care
+    question of the daily report, each day's answer — "yes", "no", or None (not reported; never
+    counted as "no"). One report per day; if a day has more than one final record (a correction),
+    the latest one counts."""
+    first = ctx.today.replace(day=1)
+    last = ctx.today.replace(day=calendar.monthrange(ctx.today.year, ctx.today.month)[1])
+    dates = [first + timedelta(days=n) for n in range((last - first).days + 1)]
+    out = {"month": ctx.today.strftime("%Y-%m"), "date": iso_date(ctx.today), "from": iso_date(first), "to": iso_date(last), "items": []}
+    form = _daily_report_form()
+    if form is None:
+        return out
+    questions = [
+        i.definition for i in sorted(form.items, key=lambda i: i.display_order or 0)
+        if i.definition.category is not None and i.definition.category.code == SELF_CARE_CATEGORY
+    ]
+    start, _ = local_day_bounds_utc(first, ctx.zone)
+    _, end = local_day_bounds_utc(last, ctx.zone)
+    records = db.session.execute(
+        select(SymptomRecord)
+        .where(
+            SymptomRecord.patient_id == ctx.patient.id,
+            SymptomRecord.form_id == form.id,
+            SymptomRecord.record_status == RecordStatus.FINAL,
+            SymptomRecord.recorded_at >= start,
+            SymptomRecord.recorded_at < end,
+        )
+        .order_by(SymptomRecord.recorded_at)
+    ).scalars().all()
+    answers = {}  # (definition_id, local date) → option value_code; later records overwrite earlier ones
+    for record in records:
+        day = to_local(record.recorded_at, ctx.zone).date()
+        for v in record.values:
+            if v.option is not None:
+                answers[(v.definition_id, day)] = v.option.value_code
+    out["items"] = [
+        {
+            "code": d.code,
+            "label": d.name_zh,
+            "days": [{"date": iso_date(day), "answer": answers.get((d.id, day))} for day in dates],
+        }
+        for d in questions
+    ]
+    return out
+
+
+def radiation_progress_widget(ctx):
+    """放射線治療進度 from the patient's radiotherapy appointments (no separate plan table):
+    sessions = radiotherapy appointments that are not cancelled / rescheduled; done = completed.
+    None when no radiotherapy session is scheduled."""
+    rows = db.session.execute(
+        select(Appointment)
+        .where(
+            Appointment.patient_id == ctx.patient.id,
+            Appointment.deleted_at.is_(None),
+            Appointment.appointment_type == AppointmentType.RADIOTHERAPY,
+            Appointment.status.notin_(RADIATION_NOT_COUNTED),
+        )
+        .order_by(Appointment.scheduled_at, Appointment.id)
+    ).scalars().all()
+    if not rows:
+        return None
+
+    def session(a, number):
+        return {
+            "id": a.id,
+            "number": number,
+            "scheduled_at": iso_utc(a.scheduled_at),
+            "location": a.location,
+            "status": a.status,
+        }
+
+    numbered = list(enumerate(rows, start=1))
+    today_session = next(((n, a) for n, a in numbered if to_local(a.scheduled_at, ctx.zone).date() == ctx.today), None)
+    upcoming = next(
+        ((n, a) for n, a in numbered
+         if a.status in (AppointmentStatus.SCHEDULED, AppointmentStatus.CHECKED_IN)
+         and to_local(a.scheduled_at, ctx.zone).date() > ctx.today),
+        None,
+    )
+    return {
+        "total_sessions": len(rows),
+        "completed_sessions": sum(a.status == AppointmentStatus.COMPLETED for a in rows),
+        "first_date": iso_date(to_local(rows[0].scheduled_at, ctx.zone).date()),
+        "last_date": iso_date(to_local(rows[-1].scheduled_at, ctx.zone).date()),
+        "today_session": session(today_session[1], today_session[0]) if today_session else None,
+        "next_session": session(upcoming[1], upcoming[0]) if upcoming else None,
     }
 
 

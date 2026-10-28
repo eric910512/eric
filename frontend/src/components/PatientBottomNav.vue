@@ -8,7 +8,7 @@ defineProps({
 })
 
 const NAV = [
-  { key: 'symptom-report', label: '症狀回報', icon: 'clipboard', to: { name: 'patient-symptoms' } },
+  { key: 'symptom-report', label: '其他症狀回報', icon: 'clipboard', to: { name: 'patient-symptoms' } },
   { key: 'vitals', label: '健康紀錄', icon: 'heart', to: { name: 'patient-timeline' } }, // 照護時間軸 / 記錄生命徵象
   { key: 'home', label: '首頁', icon: 'home', to: { name: 'patient' } },
   { key: 'notifications', label: '通知', icon: 'bell', to: { name: 'patient-notifications' } },
@@ -27,7 +27,8 @@ const NAV = [
           :aria-current="n.key === active ? 'page' : undefined"
         >
           <AppIcon :name="n.icon" :size="24" />
-          {{ n.label }}
+          <!-- 6-character labels (其他症狀回報) use a smaller size so they stay on one line at 360–390 px -->
+          <span class="whitespace-nowrap" :class="n.label.length > 4 ? 'text-xs' : ''">{{ n.label }}</span>
           <span
             v-if="n.key === 'notifications' && unread"
             class="absolute top-2 right-[calc(50%-20px)] grid min-w-5 place-items-center rounded-full bg-critical px-1 text-xs font-bold text-white"

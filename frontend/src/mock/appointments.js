@@ -335,6 +335,29 @@ export function mockTimelineAppointments(patientId, staff) {
     })
 }
 
+/**
+ * radiation-progress widget (= radiation_progress_widget): the patient's radiotherapy appointments,
+ * not cancelled / rescheduled; completed ones are done; null when none is scheduled.
+ */
+export function mockRadiationProgress(patientId) {
+  const today = todayOf(patientId)
+  const rows = state.appointments
+    .filter((a) => a.patient_id === patientId && a.appointment_type === 'radiotherapy' && !HIDDEN_TODAY.includes(a.status))
+    .sort((a, b) => Date.parse(a.scheduled_at) - Date.parse(b.scheduled_at) || a.id - b.id)
+  if (!rows.length) return null
+  const session = (a, i) => ({ id: a.id, number: i + 1, scheduled_at: a.scheduled_at, location: a.location, status: a.status })
+  const todayIndex = rows.findIndex((a) => localDay(a.scheduled_at) === today)
+  const nextIndex = rows.findIndex((a) => OPEN.includes(a.status) && localDay(a.scheduled_at) > today)
+  return {
+    total_sessions: rows.length,
+    completed_sessions: rows.filter((a) => a.status === 'completed').length,
+    first_date: localDay(rows[0].scheduled_at),
+    last_date: localDay(rows.at(-1).scheduled_at),
+    today_session: todayIndex >= 0 ? session(rows[todayIndex], todayIndex) : null,
+    next_session: nextIndex >= 0 ? session(rows[nextIndex], nextIndex) : null,
+  }
+}
+
 /** The dashboard's 今日行程 (today-schedule widget) derived again from this state. */
 function sync(patientId) {
   try {

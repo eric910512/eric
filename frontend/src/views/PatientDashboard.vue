@@ -10,7 +10,8 @@ import { useDashboardStore } from '@/stores/dashboard'
 
 /**
  * Patient home (PatientMobileShell, ui-architecture.md §1.1).
- * Widgets are rendered from the Layout JSON through the Component Registry.
+ * Widgets are rendered from the Layout JSON through the Component Registry. Notifications are on
+ * the 通知 tab (the bottom navigation keeps the unread badge), not on the home page.
  */
 const store = useDashboardStore()
 const auth = useAuthStore()
@@ -74,7 +75,9 @@ const unread = computed(() => dashboard.value?.widgets.notifications.unread_coun
 
       <template v-else-if="ctx && store.patientLayout">
         <template v-for="{ item, view } in pinned" :key="item.instance_key">
-          <component :is="view.component" v-if="view" v-bind="view.props" />
+          <div v-if="view" :id="`w-${item.widget_code}`">
+            <component :is="view.component" v-bind="view.props" />
+          </div>
         </template>
 
         <template v-for="{ item, view } in items" :key="item.instance_key">

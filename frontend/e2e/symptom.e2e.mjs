@@ -25,6 +25,11 @@ async function session(base, email, viewport = { width: 390, height: 1400, devic
   return page
 }
 const text = (p) => p.evaluate(() => document.body.innerText)
+// bottom navigation (in-page, so mock data survives); the 通知 tab carries an unread badge on a 2nd line
+const navTo = async (p, label) => {
+  await p.evaluate((label) => [...document.querySelectorAll('nav[aria-label=主要功能] a')].find((a) => a.innerText.trim().split(/\s/)[0] === label).click(), label)
+  await p.waitForNetworkIdle({ idleTime: 400, timeout: 5000 }).catch(() => {})
+}
 const clickText = (p, label) =>
   p.evaluate((label) => {
     const el = [...document.querySelectorAll('button, label')].find((b) => b.innerText.trim() === label)
@@ -42,6 +47,8 @@ const answer = (p, question, value) =>
 for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   console.log(`\n===== ${mode} =====`)
   const p = await session(base, 'patient01@demo.local')
+  // 今天的症狀 moved from the home page to 其他症狀回報 (/patient/symptoms)
+  await navTo(p, '其他症狀回報')
   await p.waitForFunction(() => document.body.innerText.includes('今天的症狀'))
   const before = await text(p)
   check(`${mode}: widget shows fever reminder tip in idle state`, before.includes('體溫 38°C 以上或畏寒發抖'))
@@ -64,6 +71,13 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
     (await text(p)).includes('化療期間發燒可能是嚴重感染') && (await p.$('a[href^="tel:"]')) !== null)
   await p.screenshot({ path: `${OUT}/sym-${mode}-form.png`, fullPage: true })
 
+  // count dashboard refreshes from here on: submitting must refresh the home data itself
+  await p.evaluate(() => {
+    const s = document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('dashboard')
+    window.__origFetchDash = s.fetchPatientDashboard
+    window.__dashFetches = 0
+    s.fetchPatientDashboard = (...a) => { window.__dashFetches++; return window.__origFetchDash(...a) }
+  })
   // double-tap submit: must produce one record
   await p.evaluate(() => {
     const b = [...document.querySelectorAll('button')].find((x) => x.innerText.trim() === '送出回報')
@@ -77,8 +91,6 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   {
     check(`${mode}: double tap sent one request with an Idempotency-Key`, mode === 'MOCK' ? p.posts.length === 0 : p.posts.length === 1 && /^[0-9a-f-]{36}$/.test(p.posts[0]), p.posts.join(','))
   }
-  check(`${mode}: dashboard refreshed — critical alert banner at top`,
-    await p.evaluate(() => !!document.querySelector('section[role=alert]')))
   await p.screenshot({ path: `${OUT}/sym-${mode}-done.png`, fullPage: true })
 
   await clickText(p, '完成')
@@ -87,6 +99,31 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   check(`${mode}: widget now shows 「今天已回報」`, after.includes('今天已回報，謝謝您'))
   const unread = await p.evaluate(() => document.querySelector('nav [aria-label$="則未讀"]')?.innerText)
   check(`${mode}: notification badge increased`, Number(unread) >= 3, `badge=${unread}`)
+  const refresh = await p.evaluate(() => {
+    const s = document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('dashboard')
+    return { fetches: window.__dashFetches, path: location.pathname, loading: Object.values(s.loading ?? {}).some(Boolean) }
+  })
+  check(`${mode}: submitting refreshed the home dashboard data while still on 其他症狀回報`,
+    refresh.fetches >= 1 && refresh.path === '/patient/symptoms', JSON.stringify(refresh))
+  // Go home with the page's own load blocked: what it shows must come from the refresh above.
+  await p.evaluate(() => {
+    const s = document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('dashboard')
+    window.__homeLoads = 0
+    s.fetchPatientDashboard = () => { window.__homeLoads++; return Promise.resolve() }
+  })
+  await navTo(p, '首頁')
+  await p.waitForSelector('#w-symptom-trend')
+  const homeFromStore = await p.evaluate(() => {
+    const pain = [...document.querySelectorAll('#w-symptom-trend ul li')].find((li) => li.innerText.startsWith('疼痛'))?.innerText
+    return { loadsBlocked: window.__homeLoads, banner: !!document.querySelector('section[role=alert]'), pain }
+  })
+  check(`${mode}: home shows the new report (alert banner + pain 8) without its own reload`,
+    homeFromStore.loadsBlocked >= 1 && homeFromStore.banner && /疼痛\s*8/.test(homeFromStore.pain ?? ''), JSON.stringify(homeFromStore))
+  await p.evaluate(() => {
+    document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('dashboard').fetchPatientDashboard = window.__origFetchDash
+  })
+  check(`${mode}: dashboard refreshed — critical alert banner on the home page`,
+    await p.evaluate(() => !!document.querySelector('section[role=alert]')))
   const todayPain = await p.evaluate(() => {
     const legend = [...document.querySelectorAll('#w-symptom-trend ul li')].find((li) => li.innerText.startsWith('疼痛'))
     return legend?.innerText

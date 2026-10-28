@@ -31,18 +31,43 @@ console.log('\n===== MOCK patient01 (low risk) =====')
 let p = await login(MOCK_URL, 'patient01@demo.local', phone)
 await p.waitForSelector(RISK)
 let t = await riskText(p)
-check('MOCK: risk summary sits right under the patient card (first widget)',
-  await p.evaluate(() => document.querySelector('main').children[1]?.id === 'w-risk-summary' || document.querySelector('main section[aria-label="病人資料"]')?.parentElement?.nextElementSibling?.id === 'w-risk-summary'))
+// 2026-10 home order (layouts.py): daily report entry → patient card → 放射線治療進度 → 今日行程 → 集點卡 → risk summary → …
+const HOME_ORDER = ['daily-report', 'patient-summary', 'radiation-progress', 'today-schedule', 'self-care-stamps',
+  'risk-summary', 'treatment-progress', 'latest-vitals', 'lab-summary', 'symptom-trend']
+{
+  const ids = await p.$$eval('main [id^=w-]', (els) => els.map((e) => e.id.slice(2)))
+  check('MOCK: risk summary is the 6th home block, right after the self-care stamp cards (exact layout order)',
+    JSON.stringify(ids) === JSON.stringify(HOME_ORDER) && ids.indexOf('risk-summary') === 5, ids.join(' > '))
+}
 check('MOCK: low risk → 「今天狀況穩定」 + both next steps', t.includes('今天狀況穩定') && t.includes('回報今天的症狀') && t.includes('量測並記錄生命徵象'))
 await p.screenshot({ path: `${OUT}/risk-MOCK-stable.png`, clip: { x: 0, y: 0, width: 390, height: 1000 } })
 
+// a small phone screen (390×560 visible): without scrolling the daily report card sits ~375 px down
+// (below 今天的症狀), and the page is tall enough for the router to bring it right under the header
+await p.setViewport({ width: 390, height: 560, deviceScaleFactor: 1 })
 await p.evaluate(() => [...document.querySelectorAll(`section[aria-label="今日健康風險摘要"] a`)].find((a) => a.innerText.includes('回報今天的症狀')).click())
-await sleep(800)
+await p.waitForFunction(() => location.pathname === '/patient/symptoms' && !!document.getElementById('daily-report'))
+// wait for the smooth scroll to settle (same scrollY for 300 ms)
+await p.waitForFunction(() => {
+  const w = window
+  if (w.__lastY === scrollY) return ++w.__same >= 6
+  w.__lastY = scrollY; w.__same = 0
+  return false
+}, { polling: 50, timeout: 5000 }).catch(() => {})
 const scrolledTo = await p.evaluate(() => {
-  const r = document.getElementById('w-symptom-quick-report').getBoundingClientRect()
-  return { top: Math.round(r.top), hash: location.hash, atEnd: Math.abs(scrollY - (document.documentElement.scrollHeight - innerHeight)) < 2 }
+  const r = document.getElementById('daily-report').getBoundingClientRect()
+  const header = Math.round(Math.max(0, ...[...document.querySelectorAll('header')].map((h) => h.getBoundingClientRect().bottom)))
+  return { path: location.pathname, hash: location.hash, top: Math.round(r.top), header, scrollY: Math.round(scrollY), vh: innerHeight,
+    atEnd: Math.abs(scrollY - (document.documentElement.scrollHeight - innerHeight)) < 2 }
 })
-check('MOCK: 「回報今天的症狀」 jumps to the symptom widget', scrolledTo.hash === '#w-symptom-quick-report' && ((scrolledTo.top >= 60 && scrolledTo.top <= 120) || scrolledTo.atEnd), JSON.stringify(scrolledTo))
+check('MOCK: 「回報今天的症狀」 opens 症狀回報 (the report cards moved off the home page)',
+  scrolledTo.path === '/patient/symptoms' && scrolledTo.hash === '#daily-report', JSON.stringify(scrolledTo))
+check('MOCK: …and the page is actually scrolled to the daily report card (card top in view under the header)',
+  // the router aims for 80 px under the top but stops at the end of the page (the card is near the end
+  // and short while it loads), so: scrolled, not under the header, and moved into the top half (unscrolled ≈ 375)
+  scrolledTo.scrollY > 0 && scrolledTo.top >= scrolledTo.header && scrolledTo.top < scrolledTo.vh / 2,
+  JSON.stringify(scrolledTo))
+await p.setViewport(phone)
 
 // fill the symptom form: pain 8 → warning alert
 await p.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.trim() === '開始回報').click())
@@ -55,6 +80,9 @@ for (const [q, v] of [['疼痛', '8'], ['噁心', '3'], ['疲倦', '4'], ['發�
 }
 await p.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.trim() === '送出回報').click())
 await p.waitForFunction(() => document.body.innerText.includes('已送出，謝謝您'))
+await idle(p); await sleep(300)
+await p.evaluate(() => [...document.querySelectorAll('nav[aria-label=主要功能] a')].find((a) => a.innerText.trim() === '首頁').click())
+await p.waitForSelector(RISK)
 await idle(p); await sleep(300)
 t = await riskText(p)
 check('MOCK: after reporting pain 8 → summary updates: 症狀回報 done with 疼痛 8, alert 處理中, status attention',

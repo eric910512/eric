@@ -151,8 +151,17 @@ for (const MODE of ['MOCK', 'API']) {
   if (MODE === 'API') {
     check(`${MODE}: patient summary after entry → 過低 + infection advice, critical tone`, t.includes('過低') && t.includes('一旦發燒請立即就醫') && t.includes('需要特別注意')
       && await p.$eval(LAB, (el) => el.querySelector('section')?.className.includes('border-critical') || el.className.includes('border-critical') || !!el.closest('.border-critical') || !!el.querySelector('.border-critical\\/60')), t.replace(/\n/g, ' | ').slice(0, 220))
-    check(`${MODE}: patient notification shows plain-language ANC alert`, await p.evaluate(() => document.body.innerText.includes('嗜中性白血球（抵抗力）為 0.4')))
     await p.screenshot({ path: `${OUT}/lab-${MODE}-patient.png`, clip: await p.$eval(LAB, (el) => { const r = el.getBoundingClientRect(); return { x: 0, y: r.y + scrollY - 8, width: 390, height: r.height + 16 } }) })
+    // notifications are on the 通知 tab since 2026-10 (not on the home page): open each item to read its message
+    await p.goto(base + '/patient/notifications', { waitUntil: 'networkidle0' })
+    await p.waitForSelector('[data-notification]')
+    const messages = []
+    for (const id of await p.$$eval('[data-notification]', (ls) => ls.map((l) => l.dataset.notification))) {
+      await p.$eval(`[data-notification="${id}"] button`, (b) => b.click())
+      await p.waitForSelector(`[data-notification="${id}"] [data-notification-detail]`).catch(() => {})
+      messages.push(await p.$eval(`[data-notification="${id}"]`, (el) => el.innerText).catch(() => ''))
+    }
+    check(`${MODE}: patient notification shows plain-language ANC alert`, messages.some((m) => m.includes('嗜中性白血球（抵抗力）為 0.4')))
   } else {
     await p.screenshot({ path: `${OUT}/lab-${MODE}-patient.png`, clip: await p.$eval(LAB, (el) => { const r = el.getBoundingClientRect(); return { x: 0, y: r.y + scrollY - 8, width: 390, height: r.height + 16 } }) })
     // mock: same-session check on P00002 via nurse context (nadir CBC, below range, no alert rule)

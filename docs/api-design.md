@@ -1053,7 +1053,7 @@ Response：結構與 `/api/v1/symptoms/trends` 相同（`series[].key` = 欄位�
 
 ## 8. Dashboard API
 
-> **實作說明**：目前以 `GET /api/v1/dashboard/patient/{pid|me}` 一次回傳所有 widget 資料（`data.widgets` 的 key 為 `widget_code`：`patient-summary`、`risk-summary`、`today-schedule`、`treatment-progress`、`symptom-quick-report`、`latest-vitals`、`lab-summary`、`symptom-trend`、`notifications`；照護人員另有 `nurse-view`，病人不會收到）。版面 API `GET /api/v1/dashboard/layout` 已實作（Sprint 0，見下方說明）。下方各 widget 的個別 data endpoint 除 `caseload` 外尚未實作。
+> **實作說明**：目前以 `GET /api/v1/dashboard/patient/{pid|me}` 一次回傳所有 widget 資料（`data.widgets` 的 key 為 `widget_code`：`patient-summary`、`risk-summary`、`today-schedule`、`treatment-progress`、`symptom-quick-report`、`latest-vitals`、`lab-summary`、`symptom-trend`、`symptom-quick-report`、`daily-report`、`self-care-stamps`、`radiation-progress`、`notifications`；照護人員另有 `nurse-view`，病人不會收到）。2026-10 首頁改版新增（additive，權限同 dashboard：病人只能看自己、護理師只能看指派病人）：`daily-report` = `{form, date, reported_today, today_record_id}`（每日症狀與自我照護回報 `rt_daily_report` 今天是否已回報，與「每天一次」409 規則同一個判斷，病人時區）；`self-care-stamps` = `{month, date, from, to, items[{code, label, days[{date, answer: "yes"|"no"|null}]}]}`（本月每一天的三項自我照護答案，未回報為 null、不當作 no；同一天多筆以最新一筆為準）；`radiation-progress` = `{total_sessions, completed_sessions, first_date, last_date, today_session, next_session}` 或 null（由 `appointment_type=radiotherapy` 的行程計算：排除取消 / 改期 / 刪除，completed 為已完成；沒有新資料表）。`symptom-trend` 不再包含 `daily_self_care` 類別（有／沒有不是分數）。版面 API `GET /api/v1/dashboard/layout` 已實作（Sprint 0，見下方說明）。下方各 widget 的個別 data endpoint 除 `caseload` 外尚未實作。
 
 ### 8.1 Layout JSON 契約（Phase 1 起固定）
 

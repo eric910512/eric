@@ -98,10 +98,10 @@ const today = computed(() => props.summary.today)
            class="flex min-h-14 items-center justify-center gap-2 rounded-full bg-critical text-lg font-bold text-white hover:bg-critical/90">
           <AppIcon name="phone" /> {{ a.label }} {{ hotline.phone }}
         </a>
-        <a v-else-if="a.code === 'report_symptoms'" href="#w-symptom-quick-report"
+        <RouterLink v-else-if="a.code === 'report_symptoms'" :to="{ name: 'patient-symptoms', hash: '#daily-report' }"
            class="flex min-h-12 items-center justify-center gap-2 rounded-full border border-line bg-surface font-bold text-care hover:bg-care-soft">
           <AppIcon name="clipboard" :size="20" /> {{ a.label }}
-        </a>
+        </RouterLink>
         <RouterLink v-else-if="a.code === 'measure_vitals'" :to="{ name: 'patient-vitals' }"
            class="flex min-h-12 items-center justify-center gap-2 rounded-full border border-line bg-surface font-bold text-care hover:bg-care-soft">
           <AppIcon name="heart" :size="20" /> {{ a.label }}
