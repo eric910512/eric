@@ -70,12 +70,14 @@ with app.app_context():
     check("patient → 200 with the §8.1 contract", r.status_code == 200 and lay["data"]["schema_version"] == 1
           and lay["data"]["source"] == "code_default" and lay["meta"] == {"role": "patient", "context": "overview"})
     check("layout = the code default", lay["data"] == PATIENT_HOME_LAYOUT)
-    check("pinned patient-summary; items in the patient home order",
-          [i["widget_code"] for i in lay["data"]["pinned"]] == ["patient-summary"]
-          and [i["widget_code"] for i in lay["data"]["items"]] == ["risk-summary", "today-schedule", "treatment-progress",
-                                                                    "symptom-quick-report", "latest-vitals", "lab-summary",
-                                                                    "symptom-trend", "my-notifications"]
+    check("pinned daily-report (top) + patient-summary; items in the patient home order (trend last)",
+          [i["widget_code"] for i in lay["data"]["pinned"]] == ["daily-report", "patient-summary"]
+          and [i["widget_code"] for i in lay["data"]["items"]] == ["radiation-progress", "today-schedule", "self-care-stamps",
+                                                                    "risk-summary", "treatment-progress", "latest-vitals",
+                                                                    "lab-summary", "symptom-trend"]
           and [i["position"]["y"] for i in lay["data"]["items"]] == list(range(8)))
+    codes = [i["widget_code"] for i in lay["data"]["pinned"] + lay["data"]["items"]]
+    check("home no longer shows 今天的症狀 / 我的通知", "symptom-quick-report" not in codes and "my-notifications" not in codes)
     check("Phase 1 permissions: no editing", lay["data"]["permissions"] == {"can_edit": False, "can_reorder": False,
                                                                             "can_remove": False, "can_collapse": True})
     d = c.get("/api/v1/dashboard/patient/me", headers=H(pt)).get_json()["data"]["widgets"]

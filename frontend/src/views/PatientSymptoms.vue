@@ -54,7 +54,7 @@ watch(() => widgets.value?.['symptom-quick-report']?.today_record_id, (id, old) 
       />
       <div v-else class="h-32 animate-pulse rounded-2xl bg-surface" aria-busy="true" />
 
-      <DailySelfCareReport :patient-id="patientId" :timezone="TZ" @submitted="portal.fetchRecords(patientId)" />
+      <DailySelfCareReport id="daily-report" class="scroll-mt-20" :patient-id="patientId" :timezone="TZ" @submitted="portal.fetchRecords(patientId)" />
 
       <section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="my-reports" data-my-reports :data-loaded="!!portal.records">
         <h2 id="my-reports" class="text-lg font-bold">我的回報</h2>

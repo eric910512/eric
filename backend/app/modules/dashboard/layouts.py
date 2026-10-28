@@ -11,15 +11,20 @@ the contract test compares both.
 
 import copy
 
+# Patient home order (需求列表 2026-10): the daily report entry on top (pinned), radiation therapy
+# progress, today's schedule, the self-care stamp cards, other treatment information, and the
+# symptom trend at the bottom. 今天的症狀 (symptom-quick-report) moved to 其他症狀回報
+# (/patient/symptoms) and 我的通知 (my-notifications) to the 通知 tab: both widgets still exist
+# (registry, payload), they are just not on the home layout.
 _ITEMS = [
-    ("risk", "risk-summary", 3, {}),
+    ("radiation", "radiation-progress", 3, {}),
     ("today", "today-schedule", 3, {}),
+    ("stamps", "self-care-stamps", 4, {}),
+    ("risk", "risk-summary", 3, {}),
     ("progress", "treatment-progress", 3, {"show_physician": True}),
-    ("report", "symptom-quick-report", 2, {}),
     ("vitals", "latest-vitals", 3, {}),
     ("labs", "lab-summary", 3, {}),
     ("trend", "symptom-trend", 4, {}),
-    ("notes", "my-notifications", 2, {}),
 ]
 
 PATIENT_HOME_LAYOUT = {
@@ -29,7 +34,10 @@ PATIENT_HOME_LAYOUT = {
     "scope": "role",
     "version": 1,
     "grid": {"columns": 1, "row_height": 80, "gap": 12},
-    "pinned": [{"instance_key": "summary", "widget_code": "patient-summary", "config": {}}],
+    "pinned": [
+        {"instance_key": "report", "widget_code": "daily-report", "config": {}},
+        {"instance_key": "summary", "widget_code": "patient-summary", "config": {}},
+    ],
     "items": [
         {"instance_key": key, "widget_code": code, "position": {"x": 0, "y": y, "w": 1, "h": h}, "config": config}
         for y, (key, code, h, config) in enumerate(_ITEMS)

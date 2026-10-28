@@ -67,13 +67,37 @@ for (const [mode, base, patientEmail] of [['MOCK', MOCK_URL, 'patient02@demo.loc
   }
   const p = await login(base, patientEmail)
   await p.waitForSelector('#w-lab-summary')
-  await sweep(p, mode, 'Patient Dashboard (incl. Lab summary, notifications)')
-  if (await clickText(p, '#w-symptom-quick-report button', '開始回報') || await clickText(p, '#w-symptom-quick-report button', '再次回報')) {
-    await p.waitForSelector('#w-symptom-quick-report fieldset').catch(() => {})
+  await sweep(p, mode, 'Patient Dashboard (incl. Lab summary, stamp cards, trend)')
+  // 今天的症狀 lives on 其他症狀回報 (/patient/symptoms) since 2026-10
+  await clickText(p, 'nav[aria-label=主要功能] a', '其他症狀回報')
+  await p.waitForSelector('[data-patient-symptoms] button').catch(() => {})
+  await p.waitForNetworkIdle({ idleTime: 400, timeout: 5000 }).catch(() => {})
+  if (await clickText(p, '[data-patient-symptoms] button', '開始回報') || await clickText(p, '[data-patient-symptoms] button', '再次回報')) {
+    await p.waitForSelector('[data-patient-symptoms] fieldset').catch(() => {})
     await sweep(p, mode, 'Symptom report form open')
   } else {
     check(`${mode} 390px: Symptom report form open`, false, 'start button not found')
   }
+  // 通知 tab (the home page no longer carries a 我的通知 card since 2026-10)
+  await clickText(p, 'nav[aria-label=主要功能] a', '通知')
+  await p.waitForFunction(() => location.pathname === '/patient/notifications').catch(() => {})
+  await p.waitForSelector('[data-notification]').catch(() => {})
+  const list = await p.$$eval('[data-notification]', (ls) => ls.map((l) => {
+    const r = l.getBoundingClientRect()
+    return { text: l.innerText.trim(), left: r.left, right: r.right }
+  }))
+  check(`${mode} 390px: 通知 page lists the patient's notifications, readable within the screen`,
+    list.length > 0 && list.every((n) => n.text.length > 0 && n.left >= 0 && n.right <= 391), `${list.length} items; ${list[0]?.text.replace(/\n/g, ' | ').slice(0, 80) ?? ''}`)
+  await sweep(p, mode, 'Patient Notifications list')
+  const detail = await p.evaluate(async () => {
+    const b = document.querySelector('[data-notification] button')
+    if (!b) return ''
+    b.click()
+    await new Promise((r) => setTimeout(r, 400))
+    return document.querySelector('[data-notification] [data-notification-detail]')?.innerText.trim() ?? ''
+  })
+  check(`${mode} 390px: a notification opens and shows its message`, detail.length > 0, detail.replace(/\n/g, ' | ').slice(0, 80))
+  await sweep(p, mode, 'Patient Notification opened')
   await p.goto(base + '/patient/timeline', { waitUntil: 'networkidle0' })
   await p.waitForSelector('section[data-timeline] li[data-event-type]')
   await sweep(p, mode, 'Health Records → Patient Timeline')

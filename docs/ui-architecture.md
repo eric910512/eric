@@ -13,9 +13,9 @@
 |---|---|
 | 登入 | `Login.vue`，依角色導向（病人 `/patient`、護理師 `/nurse`、管理者 `/admin`） |
 | 設定新密碼（`/change-password`） | 使用初始密碼登入後一律先到這裡；設定完成前其他頁面都會導回（API 同樣回 `403 PASSWORD_CHANGE_REQUIRED`） |
-| 病人首頁（`/patient`） | 依 `GET /api/v1/dashboard/layout` 的 Layout JSON 渲染（請求失敗時使用前端內建副本）：`patient-summary`（pinned）→ `risk-summary` → `today-schedule` → `treatment-progress` → `symptom-quick-report` → `latest-vitals` → `lab-summary` → `symptom-trend` → `my-notifications`（通知顯示處理狀態，不顯示護理師備註） |
+| 病人首頁（`/patient`） | 依 `GET /api/v1/dashboard/layout` 的 Layout JSON 渲染（請求失敗時使用前端內建副本）：`daily-report`（pinned，最上方：未回報 → 連到 `/patient/symptoms#daily-report`；已回報 → 綠色「今日已回報」）→ `patient-summary`（pinned）→ `radiation-progress`（放射線治療進度）→ `today-schedule`（含「療程期間，週一至週五接受放射線治療，國定假日另行公告」）→ `self-care-stamps`（三項自我照護集點卡：本月每天，有 = 紅色 ✓、沒有 = 紅色 X、未回報 = 空白）→ `risk-summary` → `treatment-progress`（化療，次要）→ `latest-vitals` → `lab-summary` → `symptom-trend`（最底部，Y 軸 0–10 每 1 分，不含三項自我照護）。2026-10 起首頁不顯示「今天的症狀」（`symptom-quick-report`，移到「其他症狀回報」頁）與「我的通知」（`my-notifications`，改看「通知」分頁）；兩個 widget 仍保留在 registry 與 payload |
 | 病人「健康紀錄」 | 分頁「照護時間軸」（`/patient/timeline`，預設）與「記錄生命徵象」（`/patient/vitals`） |
-| 病人底部導覽 | 全部已實作：症狀回報（`/patient/symptoms`：今日回報＋我的回報）、健康紀錄、首頁、通知（`/patient/notifications`：未讀數、點開即已讀、全部已讀、通知內容與處理狀態）、我的（`/patient/me`：基本資料、照護注意事項、聯絡醫院、修改密碼、登出）。病人頁面不顯示護理師姓名、內部處理說明、SOAP 或內部風險；390px 無橫向捲動 |
+| 病人底部導覽 | 全部已實作：其他症狀回報（2026-10 由「症狀回報」改名；`/patient/symptoms`：今天的症狀、每日症狀與自我照護回報、我的回報）、健康紀錄、首頁、通知（`/patient/notifications`：未讀數、點開即已讀、全部已讀、通知內容與處理狀態）、我的（`/patient/me`：基本資料、照護注意事項、聯絡醫院、修改密碼、登出）。病人頁面不顯示護理師姓名、內部處理說明、SOAP 或內部風險；390px 無橫向捲動 |
 | 護理端總覽（`/nurse/:patientId?`） | 照護重點、未處理通知、生命徵象異常、我的個案（排序：高風險優先 / 最久未回報 / 病歷代碼）、選取病人的 Banner、風險判斷、治療進度、最新生命徵象、檢驗數據（`LabPanel`，含登錄）、症狀趨勢、症狀審閱、病人照護時間軸 |
 | 護理端通知中心（`/nurse/notifications`） | 待處理 / 處理中 / 已完成；查看 → 接手 → 處理中 → 完成 |
 | 護理端病人管理（`/nurse/patients`、`/nurse/patients/:id`） | 目前指派給自己的病人；新增病人（代碼自動產生，可同時建立帳號並顯示一次初始密碼）；病人資料頁：基本資料編輯、照護注意事項、診斷、照護團隊（唯讀）、登入帳號。未指派或指派已結束的病人顯示「找不到這位病人」 |

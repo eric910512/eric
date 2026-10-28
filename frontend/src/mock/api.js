@@ -139,7 +139,15 @@ export const mockPatientDashboard = scoped((patientId) => {
   reminders.deliverDueReminders(patientId)
   const found = patientDashboards[patientId]
   if (!found) throw new Error('找不到這位病人的示範資料') // P00003 / P00004: caseload rows only
-  return { ...found, widgets: { ...found.widgets, 'lab-summary': labs.mockLabSummary(patientId) } }
+  return {
+    ...found,
+    widgets: {
+      ...found.widgets,
+      'lab-summary': labs.mockLabSummary(patientId),
+      ...symptoms.mockDailyReportWidgets(patientId),
+      'radiation-progress': appts.mockRadiationProgress(patientId),
+    },
+  }
 })
 
 export {

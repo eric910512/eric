@@ -5,7 +5,10 @@ import AppIcon from '@/components/AppIcon.vue'
 import WidgetFrame from '@/components/WidgetFrame.vue'
 import { formatDate, formatTime } from '@/utils/format'
 
-/** today-schedule widget: appointments, preparation steps (黃底紅字), leave hotline. */
+/**
+ * today-schedule widget: appointments, preparation steps (黃底紅字), leave hotline, and the
+ * radiation therapy schedule note (shown every day, with or without appointments).
+ */
 const props = defineProps({
   schedule: { type: Object, required: true },
   timezone: { type: String, default: 'Asia/Taipei' },
@@ -19,6 +22,7 @@ const TYPE_ICON = {
   education_session: 'users',
 }
 const STATUS = { checked_in: '已報到', completed: '已完成', no_show: '未到' }
+const RADIATION_NOTE = '療程期間，週一至週五接受放射線治療，國定假日另行公告'
 const INSTRUCTION_ICON = { fasting: 'clock', check_in: 'clipboard', medication: 'pill', bring_item: 'check' }
 
 // LiveClock: server_time plus elapsed time, so a wrong device clock does not matter.
@@ -40,15 +44,14 @@ const clock = computed(() => {
   <WidgetFrame
     title="今日行程"
     icon="calendar"
-    :state="schedule.appointments.length ? 'ready' : 'empty'"
-    empty-text="今天沒有排定的行程。"
   >
     <template #meta>
       <span>{{ formatDate(schedule.date) }}</span>
       <time class="ml-2 font-bold text-ink" aria-label="現在時間">{{ clock }}</time>
     </template>
 
-    <ul class="space-y-3">
+    <p v-if="!schedule.appointments.length" class="text-ink-soft">今天沒有排定的行程。</p>
+    <ul v-else class="space-y-3">
       <li v-for="appt in schedule.appointments" :key="appt.id" class="flex items-center gap-4">
         <span class="grid size-12 shrink-0 place-items-center rounded-xl bg-care-soft text-care">
           <AppIcon :name="TYPE_ICON[appt.appointment_type] ?? 'calendar'" />
@@ -78,6 +81,11 @@ const clock = computed(() => {
         </li>
       </ul>
     </div>
+
+    <p class="mt-4 flex items-start gap-2 rounded-xl bg-care-soft px-4 py-3 font-medium text-care" data-radiation-note>
+      <AppIcon name="calendar" :size="20" class="mt-0.5 shrink-0" />
+      {{ RADIATION_NOTE }}
+    </p>
 
     <a
       v-if="schedule.quick_contact"

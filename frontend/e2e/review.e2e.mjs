@@ -69,10 +69,10 @@ for (const [mode, c] of Object.entries(CASES)) {
   await click(p, NOTES, '標示為已處理', c.critical)
   await sleep(200)
   check(`${mode}: resolving with an empty note shows an error`, (await sectionText(p, NOTES)).includes('請填寫處理說明'))
-  await click(p, NOTES, '＋已電話聯繫病人', c.critical)
-  await click(p, NOTES, '＋建議立即前往急診', c.critical)
+  await click(p, NOTES, '＋已電話聯繫病人。', c.critical)
+  await click(p, NOTES, '＋建議立即前往急診。', c.critical)
   const noteValue = await p.$eval(`${section(NOTES)} textarea`, (el) => el.value)
-  check(`${mode}: quick phrases compose the note`, noteValue === '已電話聯繫病人，建議立即前往急診', noteValue)
+  check(`${mode}: 處理項目 compose the note`, noteValue === '已電話聯繫病人。建議立即前往急診。', noteValue)
   await p.screenshot({ path: `${OUT}/rev-${mode}-resolve-form.png`, clip: { x: 0, y: 0, width: 1440, height: 1100 } })
   await click(p, NOTES, '標示為已處理', c.critical)
   await idle(p); await sleep(500)
@@ -82,7 +82,7 @@ for (const [mode, c] of Object.entries(CASES)) {
   await idle(p); await sleep(400)
   t = await sectionText(p, NOTES)
   check(`${mode}: 已處理 tab shows who/when/note`,
-    t.includes(c.critical) && t.includes('已處理：測試護理師 林') && t.includes('已電話聯繫病人，建議立即前往急診'))
+    t.includes(c.critical) && t.includes('已處理：測試護理師 林') && t.includes('已電話聯繫病人。建議立即前往急診。'))
   await click(p, NOTES, '未處理')
   await idle(p)
 

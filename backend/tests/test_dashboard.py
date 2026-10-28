@@ -53,7 +53,8 @@ with app.app_context():
     check("X-Request-ID echoed", r.headers.get("X-Request-ID") == "test-req-1")
     check("nurse: all widget keys present, in order (nurse-view last)",
           list(w) == ["patient-summary", "risk-summary", "today-schedule", "treatment-progress", "latest-vitals",
-                      "lab-summary", "symptom-trend", "symptom-quick-report", "notifications", "nurse-view"], list(w))
+                      "lab-summary", "symptom-trend", "symptom-quick-report", "daily-report", "self-care-stamps",
+                      "radiation-progress", "notifications", "nurse-view"], list(w))
     pw = client.get("/api/v1/dashboard/patient/me", headers=PT).get_json()["data"]["widgets"]
     check("patient: same widgets without nurse-view", list(pw) == list(w)[:-1], list(pw))
     check("integers stay integers", w["latest-vitals"]["heart_rate_bpm"]["value"] == 88

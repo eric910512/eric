@@ -15,9 +15,10 @@ const props = defineProps({
 })
 
 const COLORS = ['#2f6b8a', '#c27a12', '#b4436c', '#2e7d5b']
-const HEIGHT = 200
+const HEIGHT = 260
 const PAD = { top: 12, right: 12, bottom: 28, left: 28 }
 const MAX = 10
+const TICKS = Array.from({ length: MAX + 1 }, (_, v) => v) // 0, 1, …, 10: one grid line per point
 
 const box = ref(null)
 const width = ref(600)
@@ -119,10 +120,10 @@ const xLabels = computed(() => {
           class="fill-nadir-soft"
         />
         <g class="stroke-line" stroke-width="1">
-          <line v-for="v in [0, 5, 10]" :key="v" :x1="PAD.left" :x2="width - PAD.right" :y1="y(v)" :y2="y(v)" />
+          <line v-for="v in TICKS" :key="v" :x1="PAD.left" :x2="width - PAD.right" :y1="y(v)" :y2="y(v)" />
         </g>
         <g class="fill-ink-soft text-[12px]">
-          <text v-for="v in [0, 5, 10]" :key="`t${v}`" :x="PAD.left - 8" :y="y(v) + 4" text-anchor="end">{{ v }}</text>
+          <text v-for="v in TICKS" :key="`t${v}`" :x="PAD.left - 8" :y="y(v) + 4" text-anchor="end">{{ v }}</text>
           <text v-for="l in xLabels" :key="`x${l.i}`" :x="x(l.i)" :y="HEIGHT - 8" text-anchor="middle">{{ l.text }}</text>
         </g>
         <g v-for="c in cycleStarts" :key="`c${c.n}`">

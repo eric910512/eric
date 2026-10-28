@@ -3,17 +3,37 @@
  * `props(ctx)` maps the dashboard payload to the component's props.
  * Unknown widget codes render a placeholder instead of breaking the page.
  */
+import DailyReportEntry from '@/components/DailyReportEntry.vue'
 import LabSummary from '@/components/LabSummary.vue'
 import LatestVitals from '@/components/LatestVitals.vue'
 import NotificationCard from '@/components/NotificationCard.vue'
 import PatientSummary from '@/components/PatientSummary.vue'
+import RadiationProgress from '@/components/RadiationProgress.vue'
 import RiskSummary from '@/components/RiskSummary.vue'
+import SelfCareStamps from '@/components/SelfCareStamps.vue'
 import SymptomQuickReport from '@/components/SymptomQuickReport.vue'
 import SymptomTrend from '@/components/SymptomTrend.vue'
 import TodaySchedule from '@/components/TodaySchedule.vue'
 import TreatmentProgress from '@/components/TreatmentProgress.vue'
 
 export const widgetRegistry = {
+  'daily-report': {
+    component: DailyReportEntry,
+    props: (ctx) => ({ report: ctx.widgets['daily-report'] ?? null }),
+  },
+  'radiation-progress': {
+    component: RadiationProgress,
+    props: (ctx) => ({
+      progress: ctx.widgets['radiation-progress'] ?? null,
+      timezone: ctx.timezone,
+      disclaimer: ctx.settings?.disclaimers?.treatment_progress_disclaimer ?? '',
+      detailsTo: { name: 'patient-treatment' },
+    }),
+  },
+  'self-care-stamps': {
+    component: SelfCareStamps,
+    props: (ctx) => ({ stamps: ctx.widgets['self-care-stamps'] ?? null }),
+  },
   'patient-summary': {
     component: PatientSummary,
     props: (ctx) => ({ summary: ctx.widgets['patient-summary'] }),

@@ -301,19 +301,24 @@ def create_symptom_record(patient, user, body, correction_of=None):
     return record, triggered
 
 
-def _ensure_not_reported_today(patient, form, recorded_at):
-    """One report of a once-per-day form per patient and local day (the patient's timezone).
-    Corrections (amend) and records marked entered-in-error do not count."""
-    zone = patient_zone(patient.timezone)
-    day = to_local(recorded_at, zone).date()
-    start, end = local_day_bounds_utc(day, zone)
-    existing = db.session.execute(
+def final_record_on_day(patient, form, day):
+    """Id of a final record of ``form`` on the patient's local ``day`` (latest first), else None —
+    the once-per-day rule, also used by the home page's 今日已回報 state."""
+    start, end = local_day_bounds_utc(day, patient_zone(patient.timezone))
+    return db.session.execute(
         select(SymptomRecord.id).where(
             SymptomRecord.patient_id == patient.id, SymptomRecord.form_id == form.id,
             SymptomRecord.record_status == RecordStatus.FINAL,
             SymptomRecord.recorded_at >= start, SymptomRecord.recorded_at < end,
-        ).limit(1)
+        ).order_by(SymptomRecord.recorded_at.desc()).limit(1)
     ).scalar()
+
+
+def _ensure_not_reported_today(patient, form, recorded_at):
+    """One report of a once-per-day form per patient and local day (the patient's timezone).
+    Corrections (amend) and records marked entered-in-error do not count."""
+    day = to_local(recorded_at, patient_zone(patient.timezone)).date()
+    existing = final_record_on_day(patient, form, day)
     if existing is not None:
         raise APIError(409, "ALREADY_REPORTED_TODAY", "今天已回報", [
             {"field": "form_code", "issue": f"already reported on {day.isoformat()}", "record_id": existing},

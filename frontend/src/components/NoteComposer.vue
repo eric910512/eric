@@ -1,5 +1,8 @@
 <script setup>
-/** Textarea + quick phrases for nurse notes (resolution note / review action note). */
+/**
+ * Textarea + 處理項目 (quick phrases) for nurse notes (resolution note / review action note).
+ * The note stays internal: patients only see the status (e.g. 已處理完成), never this text.
+ */
 const props = defineProps({
   label: { type: String, required: true },
   placeholder: { type: String, default: '' },
@@ -8,11 +11,12 @@ const props = defineProps({
 })
 const model = defineModel({ default: '' })
 
-const PHRASES = ['已電話聯繫病人', '已衛教居家照護', '建議立即前往急診', '已通知主治醫師', '明日電話追蹤']
+const PHRASES = ['已協助掛號，請明日至門診報到。', '建議立即前往急診。', '已給予護理衛教。', '已電話聯繫病人。']
 
 function add(phrase) {
   const current = model.value.trim()
-  model.value = current ? `${current.replace(/[，。]$/, '')}，${phrase}` : phrase
+  if (current.includes(phrase)) return // already chosen
+  model.value = current ? `${current.replace(/[，。]$/, '')}。${phrase}` : phrase
 }
 </script>
 
@@ -30,10 +34,18 @@ function add(phrase) {
         :class="invalid ? 'border-critical' : 'border-line'"
       />
     </label>
-    <ul class="mt-2 flex flex-wrap gap-1.5" aria-label="常用句">
+    <p class="mt-2 text-sm font-medium text-ink-soft" aria-hidden="true">處理項目</p>
+    <ul class="mt-1 flex flex-wrap gap-1.5" aria-label="處理項目" data-handling-items>
       <li v-for="p in PHRASES" :key="p">
-        <button type="button" class="min-h-9 rounded-full border border-line px-3 text-sm hover:bg-care-soft" @click="add(p)">
-          ＋{{ p }}
+        <button
+          type="button"
+          class="min-h-11 max-w-full rounded-full border px-3 py-1 text-left text-sm"
+          :class="model.includes(p) ? 'border-care bg-care-soft font-bold text-care' : 'border-line hover:bg-care-soft'"
+          :aria-pressed="model.includes(p)"
+          :data-handling-item="p"
+          @click="add(p)"
+        >
+          {{ model.includes(p) ? '✓' : '＋' }}{{ p }}
         </button>
       </li>
     </ul>
