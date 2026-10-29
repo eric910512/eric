@@ -7,7 +7,7 @@ import http from 'node:http'
 import path from 'node:path'
 
 const [root, port, apiTarget] = [path.resolve(process.argv[2]), Number(process.argv[3] || 5174), process.argv[4] ?? 'http://127.0.0.1:5000']
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2' }
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.mp4': 'video/mp4' }
 function proxy(req, res) {
   const target = new URL(req.url, apiTarget)
   const upstream = http.request(target, {
@@ -31,6 +31,17 @@ http.createServer((req, res) => {
   const headers = { 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin', 'X-Frame-Options': 'DENY', 'X-Rewritten': String(rewritten) }
   if (url.startsWith('/assets/') && !rewritten) headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-  res.writeHead(200, headers)
+  // byte ranges, like the real static host (video seeking / metadata requests use them)
+  const size = fs.statSync(file).size
+  const range = !rewritten && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+  headers['Accept-Ranges'] = 'bytes'
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]))
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1
+    if (start >= size || start > end) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end() }
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 })
+    return fs.createReadStream(file, { start, end }).pipe(res)
+  }
+  res.writeHead(200, { ...headers, 'Content-Length': size })
   fs.createReadStream(file).pipe(res)
 }).listen(port, '127.0.0.1', () => console.log(`static ${root} on :${port}`))
