@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 
 import { USE_MOCK } from '@/api/client'
 import AppIcon from '@/components/AppIcon.vue'
+import EducationVideo from '@/components/EducationVideo.vue'
 import PatientBottomNav from '@/components/PatientBottomNav.vue'
 import { widgetRegistry } from '@/dashboard/registry'
 import { useAuthStore } from '@/stores/auth'
@@ -77,6 +78,10 @@ const unread = computed(() => dashboard.value?.widgets.notifications.unread_coun
         <template v-for="{ item, view } in pinned" :key="item.instance_key">
           <div v-if="view" :id="`w-${item.widget_code}`">
             <component :is="view.component" v-bind="view.props" />
+          </div>
+          <!-- static 衛教影片 right under the daily report entry (not a layout widget: no API behind it) -->
+          <div v-if="item.widget_code === 'daily-report'" id="education-video">
+            <EducationVideo />
           </div>
         </template>
 
