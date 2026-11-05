@@ -1,7 +1,12 @@
 <script setup>
 import AppIcon from '@/components/AppIcon.vue'
+import ChatFab from '@/components/ChatFab.vue'
 
-/** Patient bottom navigation (ui-architecture.md §1.4). */
+/**
+ * Patient bottom navigation (ui-architecture.md §1.4), plus the 聊天室 button that every page with
+ * this navigation shows. The spacer gives each page extra room at its end, so nothing stays hidden
+ * under the button once scrolled to the bottom.
+ */
 defineProps({
   active: { type: String, default: 'home' },
   unread: { type: Number, default: 0 },
@@ -17,6 +22,8 @@ const NAV = [
 </script>
 
 <template>
+  <div class="h-20" aria-hidden="true" data-chat-fab-spacer />
+  <ChatFab />
   <nav class="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-surface" aria-label="主要功能">
     <ul class="mx-auto grid max-w-xl grid-cols-5">
       <li v-for="n in NAV" :key="n.key">

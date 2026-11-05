@@ -16,7 +16,9 @@ import Login from '@/views/Login.vue'
 import MyTreatment from '@/views/MyTreatment.vue'
 import NotificationCenter from '@/views/NotificationCenter.vue'
 import NurseDashboard from '@/views/NurseDashboard.vue'
+import NurseMessages from '@/views/NurseMessages.vue'
 import NursingAssessments from '@/views/NursingAssessments.vue'
+import PatientChat from '@/views/PatientChat.vue'
 import PatientDashboard from '@/views/PatientDashboard.vue'
 import PatientDetail from '@/views/PatientDetail.vue'
 import PatientList from '@/views/PatientList.vue'
@@ -93,6 +95,12 @@ export const router = createRouter({
       meta: { title: '記錄生命徵象', requiresAuth: true, roles: ['patient'] },
     },
     {
+      path: '/patient/chat',
+      name: 'patient-chat',
+      component: PatientChat,
+      meta: { title: '聊天室', requiresAuth: true, roles: ['patient'] },
+    },
+    {
       path: '/nurse/notifications',
       name: 'nurse-notifications',
       component: NotificationCenter,
@@ -121,6 +129,13 @@ export const router = createRouter({
       name: 'nurse-patient',
       component: PatientDetail,
       meta: { title: '病人資料', requiresAuth: true, roles: ['nurse'] },
+    },
+    {
+      // must stay above /nurse/:patientId? (that catch-all would take /nurse/messages otherwise)
+      path: '/nurse/messages/:patientId?',
+      name: 'nurse-messages',
+      component: NurseMessages,
+      meta: { title: '病人訊息', requiresAuth: true, roles: ['nurse'] },
     },
     {
       path: '/nurse/:patientId?',
