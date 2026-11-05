@@ -1464,6 +1464,20 @@ Response `201`：回傳規則物件。Phase 1 的 `source_type` 只接受 `vital
 
 ---
 
+## 10A. Chat API（病人與護理師聊天室，Phase 1 純文字，2026-11）
+
+| Endpoint | Method | 角色 | 說明 | Tables |
+|---|---|---|---|---|
+| `/api/v1/patients/{id\|me}/messages` | GET | patient（本人）、nurse（目前配對） | 由舊到新。`?limit=`（1–100，預設 30）與 `before_id`（更早一頁，`meta.has_more` = 還有更早）或 `after_id`（輪詢較新訊息）擇一。`meta`：`has_more`、`service`（義大醫院放射腫瘤科服務時間 / 電話 / `in_service_hours`）、`last_read_message_id`、`unread_count`。護理師開啟（無 `after_id`）寫一筆 VIEW 稽核 | chat_messages, chat_read_states, audit_logs |
+| `/api/v1/patients/{id\|me}/messages` | POST | 同上 | `{body}`（1–1000 字，去頭尾空白）；**必須帶 `Idempotency-Key`**（缺少 → 428；同 key 重送回原訊息，不新增）。回 `201 {message, auto_reply}`：病人當天（Asia/Taipei）第一則訊息後，由後端產生一則 `kind=auto_reply`、`sender_role=system` 的自動回覆，每位病人每天最多一則（資料庫唯一鍵保證，並行也只有一則）。每人每 60 秒最多 20 則（429 `RATE_LIMITED`）。稽核 CREATE 只記角色 / 長度，不記內容 | chat_messages, idempotency_records, audit_logs |
+| `/api/v1/patients/{id\|me}/messages/read` | POST | 同上 | `{last_message_id}`：已讀到這則（只會往前、上限為最新一則）→ `{last_read_message_id, unread_count}` | chat_read_states |
+| `/api/v1/chat/unread-count` | GET | patient, nurse | 病人：未讀的護理師訊息 `{unread_count}`；護理師：所有負責病人未讀的病人訊息 `{unread_count, patients_with_unread}` | chat_messages, chat_read_states |
+| `/api/v1/chat/inbox` | GET | nurse | 目前負責的病人：`[{patient{id, display_name, patient_code}, last_message{id, sender_role, kind, body(前 60 字), created_at} \| null, unread_count}]`，未讀優先、再依最新訊息 | chat_messages, nurse_patient_assignments |
+
+訊息：`{id, sender_role: patient|nurse|system, kind: text|auto_reply, body, created_at, is_mine, sender_label}`。病人看到護理師訊息的 `sender_label` 一律是「放射腫瘤科護理師」（不顯示護理師姓名）；系統訊息是「系統自動回覆」。
+
+權限：沿用 `resolve_patient` + `ensure_can_view_patient`：病人只有自己（`me` 或自己的 id），護理師只有**目前配對中**的病人（配對結束立即 404），其他一律 404；admin 第一版不開放（403）。未讀：每位使用者每個對話一個已讀指標；送出訊息會把自己的指標移到該則。即時性：前端輪詢（對話開啟時約 10 秒、未讀數約 60 秒，分頁在背景時暫停），不使用 WebSocket。
+
 ## 11. Education API（Phase 2）
 
 | Endpoint | Method | 角色 | 說明 | Tables |

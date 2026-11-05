@@ -63,6 +63,26 @@ class Config:
         },
     }
 
+    # 病人與護理師聊天室 (app/modules/chat): fixed 義大醫院放射腫瘤科 service information, independent
+    # of INSTITUTION (the demo organization). Hours are Asia/Taipei, Monday–Friday. The auto reply is
+    # posted once per patient per Asia/Taipei day, after the patient's first message of that day.
+    CHAT_SERVICE = {
+        "name": "義大醫院放射腫瘤科",
+        "timezone": "Asia/Taipei",
+        "hours": [["09:00", "12:30"], ["13:30", "17:30"]],
+        "hours_text": "星期一至五 09:00-12:30、13:30-17:30",
+        "phone": "07-6150011",
+        "extension": "2205",
+        "phone_text": "07-6150011 分機 2205",
+        "nurse_label": "放射腫瘤科護理師",
+        "auto_reply_text": (
+            "您好！這裡是義大醫院放射腫瘤科\n"
+            "小幫手將於上班時間星期一至五，早上 09:00-12:30，以及下午 13:30-17:30，依序回覆訊息，"
+            "若您有放射線治療照護上的問題皆可詢問，若您的問題無法透過訊息解決，請您於上班時間至本科掛號"
+            "或是撥打電話 07-6150011 分機 2205，至放射腫瘤科門診，由醫師看診評估，謝謝您"
+        ),
+    }
+
     # Thresholds for vital-sign flags: *_high flags value >= threshold, *_low flags value <= threshold.
     VITAL_REFERENCE_RANGES = {
         "temperature_c": {"warning_high": 37.5, "critical_high": 38.0},

@@ -398,3 +398,18 @@ class ReminderCategory:
     SYMPTOM_FOLLOWUP = "symptom_followup"  # 症狀與照護追蹤
     CLINICAL_OTHER = "clinical_other"  # 其他醫療相關 (also: not specified)
     ALL = (SCHEDULE, PREPARATION, MEDICATION, SYMPTOM_FOLLOWUP, CLINICAL_OTHER)
+
+
+class ChatSenderRole:
+    """Who wrote a chat message (chat_messages.sender_role)."""
+
+    PATIENT = "patient"
+    NURSE = "nurse"
+    SYSTEM = "system"  # the daily auto reply — never shown as a nurse's reply
+    ALL = (PATIENT, NURSE, SYSTEM)
+
+
+class ChatMessageKind:
+    TEXT = "text"
+    AUTO_REPLY = "auto_reply"
+    ALL = (TEXT, AUTO_REPLY)

@@ -41,10 +41,10 @@
 |---|---|
 | 資料來源版本 | 對齊 Database Design v3.1、API Design v1.1 |
 | Phase 1 Dashboard | 病人首頁改為 `today-schedule` / `treatment-progress` / `symptom-quick-report` / `latest-vitals` / `my-notifications`；**照護主題模組（CareTopic）移到 Phase 2**（依賴衛教與問卷排程） |
-| Component ↔ Table | v1 標為「缺」的資料表都已併入 DB v3.1，對照表改成依 Phase 標示；未納入 DB 的只剩拍照評估與聊天室 |
+| Component ↔ Table | v1 標為「缺」的資料表都已併入 DB v3.1，對照表改成依 Phase 標示；未納入 DB 的只剩拍照評估（聊天室 2026-11 以純文字加入，`chat_messages` / `chat_read_states`） |
 | Dashboard Layout | 改依 API v1.1 §8 的 **Layout JSON 契約**：Phase 1 沒有拖拉，但首頁一律由 `GET /api/v1/dashboard/layout` 回傳的 JSON 渲染 |
 | Widget 命名 | 改為 kebab-case，與 API `widget_code` 一致（`today_schedule` → `today-schedule`） |
-| 底部導覽 | 依 Phase 1 功能調整；「資源」Phase 2 才出現，聊天室不在規劃範圍 |
+| 底部導覽 | 依 Phase 1 功能調整；「資源」Phase 2 才出現；聊天室不佔底部導覽，改為右下角固定按鈕（2026-11） |
 
 ---
 
@@ -60,7 +60,7 @@
 | 過敏史 / 右手禁治療 | 結構化注意事項 `patient_care_alerts` | 1 |
 | 放射線皮膚炎評估（衛教 + 問卷 + 開放時段） | 依處方而定的照護主題（神經病變、口腔黏膜炎、手足症候群） | **2** |
 | 皮膚炎拍照評估 | 未納入 DB 設計 | 未規劃 |
-| 聊天室 | 未納入 DB 設計 | 未規劃 |
+| 聊天室 | 病人與護理師純文字聊天室（`chat_messages` / `chat_read_states`，2026-11） | 1（純文字；照片 / 語音 / 附件未規劃） |
 
 ---
 
@@ -277,7 +277,8 @@ WidgetFrame ─ CareTopicWidget               [care-topics]
 | 功能 | 參考圖位置 | 狀態 |
 |---|---|---|
 | 拍照評估（皮膚、口腔黏膜） | 底部導覽「皮膚炎評估」 | 未規劃；需要附件表並另做隱私與權限設計 |
-| 聊天室 | 底部導覽「聊天室」 | 未規劃；牽涉即時通訊與回覆時效責任 |
+
+> **聊天室（2026-11，Phase 1 純文字）**：已實作，不再屬於本表。病人每一頁右下角固定「聊天室」按鈕（在底部導覽之上、避開 iPhone 安全區；`PatientBottomNav` 附帶，頁尾多留空間不遮內容）→ `/patient/chat`（LINE 風格：自己靠右、護理師靠左統一顯示「放射腫瘤科護理師」、系統自動回覆另有樣式並註明非護理師回覆；上方固定義大醫院放射腫瘤科服務時間與電話，以及緊急醫療提醒「本聊天室非即時緊急醫療服務……請立即撥打 119 或就近急診就醫。」——頁面固定文字，不是聊天訊息）。護理端導覽「病人訊息」→ `/nurse/messages/:patientId?`（負責病人清單、未讀數、對話、回覆）；手機版側邊導覽隱藏，照護總覽上方另有「病人訊息」入口（含未讀數），清單頁有「← 照護總覽」。回覆時效以自動回覆說明服務時間；更新用輪詢（對話開啟時約 10 秒、未讀數約 60 秒，背景分頁暫停）。照片 / 語音 / 附件未納入。
 
 ---
 

@@ -105,6 +105,7 @@ def _register_blueprints(app):
 
     from app.modules.admin import admin_bp
     from app.modules.auth import auth_bp
+    from app.modules.chat import chat_bp
     from app.modules.chemotherapy import chemotherapy_bp
     from app.modules.dashboard import dashboard_bp
     from app.modules.labs import labs_bp
@@ -126,6 +127,7 @@ def _register_blueprints(app):
     app.register_blueprint(vital_signs_bp)
     app.register_blueprint(labs_bp)
     app.register_blueprint(settings_bp)
+    app.register_blueprint(chat_bp)
 
 
 def _register_commands(app):

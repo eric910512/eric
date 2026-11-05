@@ -857,6 +857,35 @@ erDiagram
 **Index**：`(notification_id)`、`(status, created_at)`
 
 > **Email 內容分級（2026-10-06，migration `470df9cf2163`）**：只在 `notification_deliveries` 新增上表三個可為 NULL 的欄位，`notifications` 不變。通知主題 `category`：`schedule`（行程與報到）、`preparation`（就診準備）→ 允許 `full`；`medication`（用藥與治療）、`symptom_followup`（症狀與照護追蹤）、`clinical_other`（其他醫療相關）→ 最多 `summary`；未指定 = `clinical_other`。`email_mode`：`none` / `summary` / `full`，未指定 = `summary`。`skip_reason` 新增 `not_requested`（`none`）。
+### K2. 病人與護理師聊天室（Phase 1 純文字，2026-11，migration `b5cd01c11e1d`）
+
+#### `chat_messages`
+| 欄位 | 型別 | 約束 | 說明 |
+|---|---|---|---|
+| id | INTEGER | **PK** | 也是對話內的順序 |
+| patient_id | INTEGER | **FK → patient_profiles.id**, NOT NULL | 每位病人一個對話串，病人與目前配對的護理師共用 |
+| sender_id | INTEGER | **FK → users.id** | 系統自動回覆為 NULL |
+| sender_role | VARCHAR(10) | NOT NULL, CHECK `patient` / `nurse` / `system` | |
+| kind | VARCHAR(20) | NOT NULL, CHECK `text` / `auto_reply` | CHECK：`auto_reply` ⇔ `system`、無 sender、有 `auto_reply_date` |
+| body | TEXT | NOT NULL | 純文字，≤ 1000 字（API 驗證） |
+| auto_reply_date | DATE | | 只有自動回覆有值：Asia/Taipei 日期 |
+| created_at | DATETIME | NOT NULL | UTC |
+
+**UQ**：`(patient_id, auto_reply_date)`（每位病人每天最多一則自動回覆；NULL 不衝突）。**Index**：`(patient_id, id)`、`(sender_id, created_at)`（傳送頻率限制）。訊息只新增、不修改。
+
+#### `chat_read_states`
+| 欄位 | 型別 | 約束 | 說明 |
+|---|---|---|---|
+| id | INTEGER | **PK** | |
+| patient_id | INTEGER | **FK → patient_profiles.id**, NOT NULL | 對話 |
+| user_id | INTEGER | **FK → users.id**, NOT NULL | 讀者（病人或護理師） |
+| last_read_message_id | INTEGER | NOT NULL, default 0 | 已讀到哪一則（只往前） |
+| updated_at | DATETIME | NOT NULL | |
+
+**UQ**：`(patient_id, user_id)`。
+
+> Migration 只新增這兩張表，不修改既有資料表或資料、不回填；downgrade 只刪除這兩張表。
+
 ---
 
 ## 7. Phase 2 Extension — 欄位設計

@@ -14,11 +14,13 @@ import SymptomReviewPanel from '@/components/SymptomReviewPanel.vue'
 import SymptomTrend from '@/components/SymptomTrend.vue'
 import TreatmentProgress from '@/components/TreatmentProgress.vue'
 import VitalAbnormalList from '@/components/VitalAbnormalList.vue'
+import { useChatStore } from '@/stores/chat'
 import { useDashboardStore } from '@/stores/dashboard'
 import { formatTime, formatWhen, localDate } from '@/utils/format'
 
 /** Nurse overview + single-patient panel (ClinicalDesktopShell, ui-architecture.md §1.3, §2.3). */
 const store = useDashboardStore()
+const chat = useChatStore() // unread count, polled by NurseNav
 const route = useRoute()
 const router = useRouter()
 
@@ -74,6 +76,16 @@ watch(selectedId, (id) => id && store.fetchPatientDashboard(id), { immediate: tr
             :class="alertTotal ? 'bg-critical-soft text-critical hover:bg-critical/15' : 'bg-mist text-ink-soft hover:text-ink'"
           >
             <AppIcon :name="alertTotal ? 'alert' : 'bell'" :size="20" /> {{ alertTotal ? `${alertTotal} 則警示待處理` : '通知中心' }}
+          </RouterLink>
+          <!-- phones: the side navigation (NurseNav) is hidden, so 病人訊息 gets its own entry here -->
+          <RouterLink
+            :to="{ name: 'nurse-messages' }"
+            class="inline-flex min-h-11 items-center gap-2 rounded-full px-4 py-2 font-bold lg:hidden"
+            :class="chat.unread ? 'bg-care-soft text-care hover:bg-care/15' : 'bg-mist text-ink-soft hover:text-ink'"
+            data-chat-mobile-entry
+          >
+            <AppIcon name="chat" :size="20" /> 病人訊息
+            <span v-if="chat.unread" class="rounded-full bg-critical px-2 text-sm font-bold text-white" :aria-label="`${chat.unread} 則未讀訊息`">{{ chat.unread }}</span>
           </RouterLink>
         </div>
 
