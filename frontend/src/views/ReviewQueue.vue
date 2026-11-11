@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 
 import NurseNav from '@/components/NurseNav.vue'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useFollowUpStore } from '@/stores/followUps'
 import { useRecordsStore } from '@/stores/records'
 import { formatTime, localDate } from '@/utils/format'
 
@@ -10,6 +11,7 @@ import { formatTime, localDate } from '@/utils/format'
  * abnormal vital signs and lab results, and alerts not yet taken over. Rows open the patient. */
 const dashboard = useDashboardStore()
 const store = useRecordsStore()
+const followUps = useFollowUpStore() // 追蹤逾期 shortcut (Phase 1c): a work-list hint only
 const TZ = 'Asia/Taipei'
 const q = computed(() => store.queues)
 const when = (iso) => `${localDate(iso, TZ)} ${formatTime(iso, TZ)}`
@@ -22,6 +24,7 @@ const sections = computed(() => [
 ])
 
 onMounted(() => {
+  followUps.fetchList({ status: 'open', patientId: null, page: 1 })
   dashboard.fetchSettings()
   store.fetchQueues()
 })
@@ -35,6 +38,11 @@ onMounted(() => {
         <h1 class="text-2xl font-bold">待審清單</h1>
         <p class="text-ink-soft">目前負責的病人中，等待審閱或處理的項目。</p>
       </header>
+      <RouterLink v-if="followUps.list?.meta.counts" :to="{ name: 'nurse-follow-ups', query: { status: 'overdue' } }"
+        class="inline-flex min-h-11 items-center gap-2 rounded-full px-4 font-bold"
+        :class="followUps.list.meta.counts.overdue ? 'bg-critical-soft text-critical' : 'bg-surface text-ink-soft ring-1 ring-line'" data-queue-follow-ups>
+        追蹤管理：待追蹤 {{ followUps.list.meta.counts.open }}・已逾期 {{ followUps.list.meta.counts.overdue }} →
+      </RouterLink>
       <ul v-if="q" class="flex flex-wrap gap-2" aria-label="數量">
         <li v-for="s in sections" :key="s.key" class="rounded-full bg-surface px-4 py-1.5 ring-1 ring-line" :data-count="s.key">{{ s.title }} <strong>{{ s.count }}</strong></li>
       </ul>

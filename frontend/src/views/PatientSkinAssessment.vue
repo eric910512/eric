@@ -11,6 +11,7 @@ import SkinPhotoViewer from '@/components/SkinPhotoViewer.vue'
 import SymptomField from '@/components/SymptomField.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useFollowUpStore } from '@/stores/followUps'
 import { usePatientPortalStore } from '@/stores/patientPortal'
 import { useSkinPhotoStore } from '@/stores/skinPhotos'
 import { formatTime, localDate } from '@/utils/format'
@@ -36,6 +37,14 @@ const auth = useAuthStore()
 const dashboard = useDashboardStore()
 const portal = usePatientPortalStore()
 const photoStore = useSkinPhotoStore()
+const followUps = useFollowUpStore() // 照護追蹤 (Phase 1c): read only
+const FOLLOW_UP_TEXT = { open: '已安排追蹤', completed: '追蹤已完成', cancelled: '追蹤已取消' }
+const followUpOf = computed(() => {
+  const out = {}
+  for (const f of followUps.mine?.items ?? []) if (!out[f.symptom_record.id] || f.status === 'open') out[f.symptom_record.id] = f
+  return out
+})
+const shortDate = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
 const TZ = 'Asia/Taipei'
 const patientId = computed(() => (USE_MOCK ? auth.user?.patient_id : 'me'))
 const unread = computed(() => dashboard.patients[patientId.value]?.widgets?.notifications?.unread_count ?? 0)
@@ -159,6 +168,7 @@ onMounted(() => {
   dashboard.fetchSymptomForm(FORM_CODE)
   portal.fetchFormRecords(patientId.value, FORM_CODE)
   photoStore.fetchSettings()
+  followUps.fetchMine()
   if (!dashboard.patients[patientId.value]) dashboard.fetchPatientDashboard(patientId.value)
 })
 onBeforeUnmount(() => {
@@ -289,6 +299,25 @@ onBeforeUnmount(() => {
               </li>
             </ul>
             <p class="mt-1 text-sm text-ink-soft">{{ r.review_status === 'reviewed' ? '護理師已看過這筆紀錄' : '護理師會在服務時間內查看' }}</p>
+            <p v-if="followUpOf[r.id]" class="mt-1 text-sm font-bold text-care" data-skin-follow-up>
+              {{ FOLLOW_UP_TEXT[followUpOf[r.id].status] }}<template v-if="followUpOf[r.id].status === 'open'">（預定 {{ shortDate(followUpOf[r.id].due_local_date) }}）</template>
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 照護追蹤 (Phase 1c): read only; no nurse notes; not real-time monitoring -->
+      <section v-if="followUps.mine?.items.length || followUps.mineError" class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="my-follow-ups"
+        data-my-follow-ups>
+        <h2 id="my-follow-ups" class="text-lg font-bold">照護追蹤</h2>
+        <p class="mt-2 rounded-xl bg-critical-soft px-3 py-2 text-sm text-critical" role="note" data-follow-up-notice>
+          本功能為照護追蹤紀錄，並非即時監測或緊急通報系統。如有急性或嚴重不適，請依醫院指示聯繫醫療團隊；緊急情況請撥打 119。
+        </p>
+        <p v-if="followUps.mineError" class="mt-2 text-critical" role="alert">{{ followUps.mineError.message }}</p>
+        <ul v-else class="mt-2 divide-y divide-line">
+          <li v-for="f in followUps.mine.items" :key="f.id" class="flex flex-wrap items-baseline gap-x-3 py-2" :data-my-follow-up="f.status">
+            <span class="font-bold">{{ FOLLOW_UP_TEXT[f.status] }}</span>
+            <span class="text-sm text-ink-soft">預定 {{ f.due_local_date }}・{{ localDate(f.symptom_record.recorded_at, TZ) }} 的回報</span>
           </li>
         </ul>
       </section>

@@ -431,3 +431,18 @@ class PhotoDeleteReason:
 class ConsentType:
     SKIN_PHOTO = "skin_photo"
     ALL = (SKIN_PHOTO,)
+
+
+class FollowUpStatus:
+    OPEN = "open"  # 待追蹤 (overdue = open and due_at in the past: computed, never stored)
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    ALL = (OPEN, COMPLETED, CANCELLED)
+
+
+class FollowUpEventType:
+    CREATED = "created"
+    RESCHEDULED = "rescheduled"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    ALL = (CREATED, RESCHEDULED, COMPLETED, CANCELLED)

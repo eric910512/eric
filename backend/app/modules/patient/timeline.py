@@ -495,6 +495,12 @@ def _assessments(ctx):
         .limit(ctx.params.limit + 1)
     ).scalars().all()
     events = []
+    completions = {}  # staff: assessment id → the care follow-up it closed (Phase 1c)
+    if ctx.staff and rows:
+        from app.models import CareFollowUp
+
+        completions = dict(db.session.execute(select(CareFollowUp.completion_assessment_id, CareFollowUp.public_id).where(
+            CareFollowUp.completion_assessment_id.in_([a.id for a in rows]))).all())
     for a in rows:
         type_text = ASSESSMENT_TYPE_TEXT.get(a.assessment_type, "護理評估")
         if ctx.staff:
@@ -508,7 +514,9 @@ def _assessments(ctx):
                 "next_follow_up_at": iso_utc(a.next_follow_up_at),
             }
             severity = RISK_TO_SEVERITY.get(a.risk_level)
-            title = f"護理評估（{type_text}）" + ("・草稿" if a.sign_status == SignStatus.DRAFT else "")
+            title = f"護理評估（{type_text}）" + ("・草稿" if a.sign_status == SignStatus.DRAFT else "") + ("・追蹤結案" if a.id in completions else "")
+            if a.id in completions:
+                detail["care_follow_up_id"] = completions[a.id]
         else:
             summary = "護理師已追蹤您的狀況。" if a.assessment_type == "phone_follow_up" else "護理師已完成評估。"
             detail = {"assessment_type": a.assessment_type, "assessment_type_text": type_text}

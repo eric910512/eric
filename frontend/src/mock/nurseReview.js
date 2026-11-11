@@ -6,8 +6,10 @@
  */
 import { afterSteps, byTimeDesc, nowIso } from '@/mock/clock'
 import { nurseOverview } from '@/mock/nurseOverview'
+import { createMockFollowUp, mockRecordFollowUp, mockRecordHasAnyFollowUp, mockRecordHasOpenFollowUp, reviewFollowUpSpec } from '@/mock/followUps'
 import { recordReviewAssessment } from '@/mock/nursing'
 import { patientDashboards } from '@/mock/patientDashboards'
+import { mockCurrentUser } from '@/mock/patients'
 
 const NURSE = { id: 'mock-user-nurse01', display_name: '測試護理師 林' }
 const P1 = { id: '72ba2de4-f19d-4daf-96f9-03a5e83c07d0', patient_code: 'P00001', display_name: '測試病人 甲' }
@@ -348,14 +350,23 @@ export function closeNotifications(rows, note) {
 /** Every record of one patient (any status) — the once-per-day check of the daily report mock. */
 export const mockListRecordsStore = (patientId) => records[patientId] ?? []
 
-// 需追蹤 = reviewed with a planned follow-up (review.next_follow_up_at), like review_status=follow_up of the API
-const followUp = (r) => r.review_status === 'reviewed' && !!r.review?.next_follow_up_at
+// 需追蹤 (= review_status=follow_up of the API): an open care follow-up, or a Phase 1a review date without any follow-up item
+const legacyFollowUpAt = (r) => (r.review?.next_follow_up_at && !mockRecordHasAnyFollowUp(r.id) ? r.review.next_follow_up_at : null)
+const followUp = (r) => r.review_status === 'reviewed' && (mockRecordHasOpenFollowUp(r.id) || !!legacyFollowUpAt(r))
+const viewerIsStaff = () => {
+  try {
+    return mockCurrentUser().role !== 'patient'
+  } catch {
+    return false
+  }
+}
 
 export function mockListRecords(patientId, { reviewStatus = 'all', formCode = null } = {}) {
   const all = (records[patientId] ?? []).filter((r) => r.record_status === 'final' && (!formCode || r.form?.code === formCode))
   const items = reviewStatus === 'all' ? all : reviewStatus === 'follow_up' ? all.filter(followUp) : all.filter((r) => r.review_status === reviewStatus)
   return {
-    data: clone(items).map((r) => ({ photos: [], ...r })), // 皮膚照片: metadata of the report's photos
+    // 皮膚照片: metadata of the report's photos; 追蹤 (nurses only): the record's follow-up summary
+    data: clone(items).map((r) => ({ photos: [], ...r, ...(viewerIsStaff() ? { follow_up: mockRecordFollowUp(r.id), legacy_follow_up_at: legacyFollowUpAt(r) } : {}) })),
     meta: {
       page: 1, per_page: 50, total: items.length,
       submitted: all.filter((r) => r.review_status === 'submitted').length,
@@ -371,6 +382,7 @@ export function mockReview(recordId, payload) {
   if (record.review_status === 'reviewed') {
     throw Object.assign(new Error(`這筆紀錄已由${record.reviewed_by.display_name}審閱`), { code: 'INVALID_STATE' })
   }
+  const spec = reviewFollowUpSpec(payload) // Phase 1c: follow_up {due_at, reason} (or the Phase 1a next_follow_up_at)
   const followUpAt = payload.next_follow_up_at ?? null
   if (followUpAt !== null) {
     const at = Date.parse(followUpAt)
@@ -392,9 +404,10 @@ export function mockReview(recordId, payload) {
       assessment_type: payload.assessment_type ?? 'phone_follow_up',
       action_note: payload.action_note,
       risk_level: payload.risk_level ?? null,
-      next_follow_up_at: followUpAt ? new Date(followUpAt).toISOString() : null, // set → 需追蹤
+      next_follow_up_at: spec?.due ?? null,
     },
   })
+  if (spec) createMockFollowUp(record, mockCurrentUser('nurse').id, spec.due, spec.reason, record.review.nursing_assessment_id)
   let resolved = 0
   if (payload.resolve_alerts !== false) {
     for (const n of notifications) {
@@ -411,7 +424,7 @@ export function mockReview(recordId, payload) {
   }
   const row = nurseOverview.caseload.data.find((p) => p.patient_id === record.patient_id)
   if (row) row.pending_review_count = Math.max(0, row.pending_review_count - 1)
-  return { ...clone(record), resolved_notifications: resolved }
+  return { photos: [], ...clone(record), follow_up: mockRecordFollowUp(record.id), legacy_follow_up_at: legacyFollowUpAt(record), resolved_notifications: resolved }
 }
 
 const abnormalVitals = [

@@ -1,4 +1,6 @@
-# 需追蹤結案機制 與 護理師專業分級：資料結構設計（**設計稿，待審查；未建表、未執行 migration**）
+# 需追蹤結案機制 與 護理師專業分級：資料結構設計
+
+> 狀態（2026-11-12）：**A 節（追蹤結案）已於 Phase 1c 實作**（`feature/skin-follow-up`，migration `a9d4e2b7c5f1`），實際結構與差異見 `skin-follow-up-implementation.md`。**B 節（專業分級）仍為設計稿，未建表**。
 
 > 範圍：皮膚自我評估（`rt_skin_self_assessment`）Phase 1a 之後的兩項結構。兩者都只**新增**資料表，不修改既有表、不改既有紀錄。
 > 臨床內容（分級標準、版本、分級文字、追蹤規則）仍待院方確認，見 `skin-self-assessment-clinical-review.md`。

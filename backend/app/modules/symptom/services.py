@@ -404,13 +404,21 @@ def serialize_record(record, triggered_alerts):
 REVIEW_ASSESSMENT_TYPES = ("phone_follow_up", "follow_up")
 MAX_ACTION_NOTE = 2000
 MAX_FOLLOW_UP_AHEAD = timedelta(days=180)
-# review_status filter of the records list: "follow_up" = reviewed with a planned follow-up
-# (next_follow_up_at on the review's nursing assessment) — 需追蹤, a subset of reviewed.
+# review_status filter of the records list: "follow_up" = 需追蹤, a subset of reviewed:
+# - an open care follow-up (Phase 1c care_follow_ups), or
+# - a Phase 1a review that planned a date (nursing_assessments.next_follow_up_at) and has no care follow-up
+#   at all yet — such dates are never converted in bulk; they stay visible until a nurse creates the
+#   follow-up item for them (a completed / cancelled item then decides, as for any other record).
 FOLLOW_UP = "follow_up"
 
 
 def _follow_up_filter():
-    return SymptomRecord.nursing_assessment.has(NursingAssessment.next_follow_up_at.is_not(None))
+    from sqlalchemy import and_, or_
+
+    from app.modules.follow_up.services import any_follow_up_exists, open_follow_up_exists
+
+    legacy = and_(SymptomRecord.nursing_assessment.has(NursingAssessment.next_follow_up_at.is_not(None)), ~any_follow_up_exists())
+    return or_(open_follow_up_exists(), legacy)
 
 
 def list_patient_records(patient, *, review_status, page, per_page, form_code=None):
@@ -508,6 +516,11 @@ def record_list_payload(record, *, viewer_role):
         }
         if assessment and viewer_role != RoleName.PATIENT else None
     )
+    if viewer_role != RoleName.PATIENT:  # nurse work item (Phase 1c); patients see their follow-ups on their own page
+        from app.modules.follow_up.services import legacy_follow_up_at, record_summary
+
+        data["follow_up"] = record_summary(record)
+        data["legacy_follow_up_at"] = legacy_follow_up_at(record)  # Phase 1a date without a follow-up item
     return data
 
 
@@ -569,7 +582,23 @@ def review_record(record, nurse, body):
     resolve_alerts = body.get("resolve_alerts", True)
     if not isinstance(resolve_alerts, bool):
         errors.add("resolve_alerts", "must be true or false")
-    next_follow_up_at = _parse_follow_up(body, errors)
+    # 追蹤 (Phase 1c): ``follow_up: {due_at, reason}`` creates a care follow-up with the review (one
+    # transaction). The Phase 1a ``next_follow_up_at`` still works: its reason is the review's action note.
+    follow_up_reason = None
+    if body.get("follow_up") is not None:
+        from app.modules.follow_up.services import MAX_REASON, parse_due_at, text_field
+
+        spec = body["follow_up"]
+        if not isinstance(spec, dict):
+            errors.add("follow_up", "must be an object {due_at, reason}")
+            next_follow_up_at = None
+        else:
+            next_follow_up_at = parse_due_at(spec.get("due_at"), record.patient, errors, "follow_up.due_at")
+            follow_up_reason = text_field(spec, "reason", errors, MAX_REASON)
+    else:
+        next_follow_up_at = _parse_follow_up(body, errors)
+        if next_follow_up_at is not None and isinstance(note, str):
+            follow_up_reason = note.strip()[:1000]
     grades = body.get("ctcae_grades", [])
     values_by_code = {v.definition.code: v for v in record.values}
     parsed_grades = []
@@ -627,6 +656,10 @@ def review_record(record, nurse, body):
     record.reviewed_by = nurse.id
     record.reviewed_at = now
     record.nursing_assessment_id = assessment.id
+    if next_follow_up_at is not None:
+        from app.modules.follow_up.services import create_follow_up
+
+        create_follow_up(record, nurse, next_follow_up_at, follow_up_reason, assessment)
 
     resolved = resolve_source_alerts("symptom_records", record.id, nurse, note) if resolve_alerts else []
     return assessment, [v.definition.code for v, _ in parsed_grades], resolved

@@ -21,6 +21,7 @@ const NAV = [
   { label: '病人訊息', icon: 'chat', to: { name: 'nurse-messages' }, key: 'nurse-messages', chat: true },
   { label: '病人管理', icon: 'users', to: { name: 'nurse-patients' }, key: 'nurse-patients' },
   { label: '待審清單', icon: 'clipboard', to: { name: 'nurse-reviews' }, key: 'symptom-reviews' },
+  { label: '追蹤管理', icon: 'calendar', to: { name: 'nurse-follow-ups' }, key: 'nurse-follow-ups' },
   { label: '護理評估', icon: 'check', to: { name: 'nurse-assessments' }, key: 'nursing-assessments' },
 ]
 </script>

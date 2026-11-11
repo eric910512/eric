@@ -88,6 +88,11 @@ watch(selectedId, (id) => id && store.fetchPatientDashboard(id), { immediate: tr
             <AppIcon name="chat" :size="20" /> 病人訊息
             <span v-if="chat.unread" class="rounded-full bg-critical px-2 text-sm font-bold text-white" :aria-label="`${chat.unread} 則未讀訊息`">{{ chat.unread }}</span>
           </RouterLink>
+          <!-- phones: 追蹤管理 (Phase 1c) — the side navigation is hidden -->
+          <RouterLink :to="{ name: 'nurse-follow-ups' }" class="inline-flex min-h-11 items-center gap-2 rounded-full bg-mist px-4 py-2 font-bold text-ink-soft hover:text-ink lg:hidden"
+            data-follow-up-mobile-entry>
+            <AppIcon name="calendar" :size="20" /> 追蹤管理
+          </RouterLink>
         </div>
 
         <div class="mt-4 flex h-3 overflow-hidden rounded-full" role="img"

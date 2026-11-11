@@ -111,6 +111,7 @@ def _register_blueprints(app):
     from app.modules.auth import auth_bp
     from app.modules.chat import chat_bp
     from app.modules.photo import photo_bp
+    from app.modules.follow_up import follow_up_bp
     from app.modules.chemotherapy import chemotherapy_bp
     from app.modules.dashboard import dashboard_bp
     from app.modules.labs import labs_bp
@@ -134,6 +135,7 @@ def _register_blueprints(app):
     app.register_blueprint(settings_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(photo_bp)
+    app.register_blueprint(follow_up_bp)
 
 
 def _register_commands(app):

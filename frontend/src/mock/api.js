@@ -162,6 +162,9 @@ export { mockMyMarkRead, mockMyNotification, mockMyNotifications, mockMyReadAll,
 // 病人與護理師聊天室 (access checks inside: patient / assigned nurse; admin 403)
 export { mockChatInbox, mockChatMessages, mockChatUnreadCount, mockMarkChatRead, mockSendChatMessage } from '@/mock/chat'
 export {
+  mockCancelFollowUp, mockCompleteFollowUp, mockCreateFollowUp, mockFollowUp, mockFollowUpEvents, mockListFollowUps, mockMyFollowUps, mockRescheduleFollowUp,
+} from '@/mock/followUps'
+export {
   mockAcceptPhotoConsent, mockDiscardPhoto, mockPatientPhotos, mockPhotoContent, mockPhotoSettings, mockRevokePhotoConsent, mockUploadPhoto,
 } from '@/mock/photos'
 

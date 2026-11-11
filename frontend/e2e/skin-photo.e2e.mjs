@@ -280,7 +280,8 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   check(`${mode} daily report untouched (not reported today)`, await waitSel(p, '[data-daily-report][data-state=idle]'))
 
   // ---------------------------------------------------------------- API-level checks
-  const list = mode === 'API' ? (await api(`/symptoms/records/${pid}?form_code=rt_skin_self_assessment`, nt)).body
+  // the patient is signed in here: compare the patient's view on both sides (nurses also get a follow_up summary, Phase 1c)
+  const list = mode === 'API' ? (await api('/symptoms/records/me?form_code=rt_skin_self_assessment', pt)).body
     : (await mockCall('mockListRecords', [pid, { formCode: 'rt_skin_self_assessment' }])).body
   const withPhotos = list.data.find((r) => r.photos.length === 3)
   shapes[mode].record = shape(withPhotos)

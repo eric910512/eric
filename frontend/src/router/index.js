@@ -16,6 +16,7 @@ import Login from '@/views/Login.vue'
 import MyTreatment from '@/views/MyTreatment.vue'
 import NotificationCenter from '@/views/NotificationCenter.vue'
 import NurseDashboard from '@/views/NurseDashboard.vue'
+import NurseFollowUps from '@/views/NurseFollowUps.vue'
 import NurseMessages from '@/views/NurseMessages.vue'
 import NursingAssessments from '@/views/NursingAssessments.vue'
 import PatientChat from '@/views/PatientChat.vue'
@@ -144,6 +145,13 @@ export const router = createRouter({
       name: 'nurse-messages',
       component: NurseMessages,
       meta: { title: '病人訊息', requiresAuth: true, roles: ['nurse'] },
+    },
+    {
+      // 追蹤管理 (Phase 1c); above /nurse/:patientId? as well
+      path: '/nurse/follow-ups',
+      name: 'nurse-follow-ups',
+      component: NurseFollowUps,
+      meta: { title: '追蹤管理', requiresAuth: true, roles: ['nurse'] },
     },
     {
       path: '/nurse/:patientId?',

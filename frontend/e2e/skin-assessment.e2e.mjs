@@ -224,6 +224,7 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   await click(p, '[data-target] button[type=submit]')
   check(`${mode} follow-up without a date → asked for it`, await waitFn(p, () => document.querySelector('[data-target] [role=alert]')?.innerText.includes('追蹤日期')))
   await setValue(p, '[data-target] [data-follow-up-date]', taipeiDate(3))
+  await setValue(p, '[data-target] [data-follow-up-reason]', '三天後評估脫皮範圍') // Phase 1c: a follow-up needs its reason
   await click(p, '[data-target] button[type=submit]')
   check(`${mode} reviewed → leaves 待審閱`, await waitFn(p, (n) => ![...document.querySelectorAll('article')].some((x) => x.innerText.includes(n)), NOTES, 15000))
   const after = (await listSkin()).data.find((r) => r.id === before.id)
