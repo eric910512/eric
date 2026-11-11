@@ -1,17 +1,24 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { USE_MOCK } from '@/api/client'
 import AppIcon from '@/components/AppIcon.vue'
 import PatientBottomNav from '@/components/PatientBottomNav.vue'
+import SkinPhoto from '@/components/SkinPhoto.vue'
+import SkinPhotoHistory from '@/components/SkinPhotoHistory.vue'
+import SkinPhotoPicker from '@/components/SkinPhotoPicker.vue'
+import SkinPhotoViewer from '@/components/SkinPhotoViewer.vue'
 import SymptomField from '@/components/SymptomField.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useDashboardStore } from '@/stores/dashboard'
 import { usePatientPortalStore } from '@/stores/patientPortal'
+import { useSkinPhotoStore } from '@/stores/skinPhotos'
 import { formatTime, localDate } from '@/utils/format'
 
 /**
- * Patient: 皮膚自我評估 (/patient/skin) — form rt_skin_self_assessment (Phase 1a, text only, no photos).
+ * Patient: 皮膚自我評估 (/patient/skin) — form rt_skin_self_assessment. Phase 1b: optional photos (at most 3,
+ * after the versioned consent — a draft pending the hospital's review), uploaded one by one before sending
+ * and attached with the report; when photos are off the text report works as before.
  * Plain-language answers only: the patient never picks a CTCAE / RTOG grade, and never sees the nurse's
  * professional assessment. Every question is optional (at least one answer, or 「不確定，請護理師協助評估」).
  * Not a real-time service: nothing here promises that someone is watching. The wording of the new
@@ -28,6 +35,7 @@ const SAFETY_ANSWERS = { rt_dermatitis_desquamation: ['bleeding'], skin_broken_e
 const auth = useAuthStore()
 const dashboard = useDashboardStore()
 const portal = usePatientPortalStore()
+const photoStore = useSkinPhotoStore()
 const TZ = 'Asia/Taipei'
 const patientId = computed(() => (USE_MOCK ? auth.user?.patient_id : 'me'))
 const unread = computed(() => dashboard.patients[patientId.value]?.widgets?.notifications?.unread_count ?? 0)
@@ -46,11 +54,23 @@ const missing = ref(false)
 const submitError = ref(null)
 let idempotencyKey = null
 
+// 皮膚照片 (optional)
+const photos = ref([]) // SkinPhotoPicker items
+const photoSettings = computed(() => photoStore.settings)
+const consent = computed(() => photoSettings.value?.consent)
+const photoBlocked = ref('') // why the report cannot be sent yet (a photo still uploading / failed)
+const viewing = ref(null) // { photo, answers, notes }
+const photoHistory = ref(null)
+const consentBusy = ref(false)
+const consentError = ref(null)
+const photoSpec = computed(() => photos.value.filter((p) => p.status === 'uploaded').map((p) => `${p.photoId}:${p.site}`).join(','))
+
 const answered = computed(() => questions.value.filter((i) => answers[i.definition.code] != null))
 const safetyHint = computed(() => Object.entries(SAFETY_ANSWERS).some(([code, codes]) => codes.includes(answers[code])))
 
-// a changed answer is a new submission (a retry of the same one keeps its Idempotency-Key)
-watch([answers, assist, notes], () => {
+// a changed answer or photo set is a new submission (a retry of the same one keeps its Idempotency-Key)
+watch([answers, assist, notes, photoSpec], () => {
+  photoBlocked.value = ''
   idempotencyKey = null
   submitError.value = null
   if (answered.value.length || assist.value) missing.value = false
@@ -62,7 +82,33 @@ function describe(r) {
   return r.values.map((v) => (v.option_label !== undefined ? `${v.label}：${v.option_label}` : `${v.label} ${v.score ?? v.value_numeric}`)).join('、')
 }
 
+function clearPhotos() {
+  for (const p of photos.value) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
+  photos.value = []
+}
+
+async function acceptConsent() {
+  consentBusy.value = true
+  consentError.value = null
+  try {
+    await photoStore.acceptConsent()
+  } catch (err) {
+    consentError.value = err
+    if (err.code === 'CONSENT_VERSION_MISMATCH') photoStore.fetchSettings() // show the new text
+  } finally {
+    consentBusy.value = false
+  }
+}
+
+async function revokeConsent() {
+  if (!confirm('撤回後就不能再上傳皮膚照片。這次還沒送出的照片會一併移除；已送出的照片不會被刪除，依醫院規定保存。確定要撤回嗎？')) return
+  for (const p of [...photos.value]) if (p.photoId) photoStore.discard(p.photoId).catch(() => {})
+  clearPhotos()
+  await photoStore.revokeConsent()
+}
+
 function reset() {
+  clearPhotos()
   for (const k of Object.keys(answers)) delete answers[k]
   assist.value = false
   notes.value = ''
@@ -77,6 +123,15 @@ async function submit() {
     missing.value = true
     return
   }
+  if (photos.value.some((p) => p.status === 'preparing' || p.status === 'uploading')) {
+    photoBlocked.value = '照片還在上傳，請稍候再送出。'
+    return
+  }
+  if (photos.value.some((p) => p.status === 'failed' || p.status === 'invalid')) {
+    photoBlocked.value = '有照片沒有上傳成功：請按「重試」，或「移除」後再送出（您填寫的內容都還在）。'
+    return
+  }
+  const attached = photos.value.map((p) => ({ id: p.photoId, ...(p.site ? { body_site: p.site } : {}) }))
   idempotencyKey ??= globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
   state.value = 'submitting'
   const values = answered.value.map((i) => {
@@ -86,10 +141,13 @@ async function submit() {
   if (assist.value) values.push({ definition_code: ASSIST, option_code: 'yes' })
   const text = notes.value.trim()
   try {
-    await dashboard.submitSymptomReport(patientId.value, { form_code: FORM_CODE, values, ...(text ? { notes: text } : {}) }, idempotencyKey)
+    await dashboard.submitSymptomReport(patientId.value,
+      { form_code: FORM_CODE, values, ...(text ? { notes: text } : {}), ...(attached.length ? { photos: attached } : {}) }, idempotencyKey)
     idempotencyKey = null
     state.value = 'done'
+    clearPhotos() // now part of the report (not discarded)
     portal.fetchFormRecords(patientId.value, FORM_CODE)
+    photoHistory.value?.reload()
   } catch (err) {
     if (!err.retryable) idempotencyKey = null
     submitError.value = err
@@ -100,7 +158,12 @@ async function submit() {
 onMounted(() => {
   dashboard.fetchSymptomForm(FORM_CODE)
   portal.fetchFormRecords(patientId.value, FORM_CODE)
+  photoStore.fetchSettings()
   if (!dashboard.patients[patientId.value]) dashboard.fetchPatientDashboard(patientId.value)
+})
+onBeforeUnmount(() => {
+  clearPhotos() // previews only: unsent photos stay pending and are cleaned up by the server
+  photoStore.releaseImages()
 })
 </script>
 
@@ -160,6 +223,37 @@ onMounted(() => {
             </span>
           </label>
 
+          <!-- 皮膚照片 (optional) -->
+          <section class="space-y-3 rounded-xl border border-line p-4" aria-labelledby="photo-title" data-photo-section>
+            <h3 id="photo-title" class="text-lg font-bold">皮膚照片（選填）</h3>
+            <p v-if="!photoSettings && !photoStore.settingsError" class="h-10 animate-pulse rounded-lg bg-mist" aria-busy="true" />
+            <p v-else-if="photoStore.settingsError || !photoSettings.upload_enabled" class="rounded-lg bg-mist px-3 py-2 text-sm text-ink-soft" data-photo-disabled>
+              照片上傳目前未開放。您仍可以用文字記錄皮膚狀況，或在服務時間撥打電話詢問。
+            </p>
+            <div v-else-if="!consent?.accepted" class="space-y-2 text-sm" data-photo-consent>
+              <p class="flex flex-wrap items-center gap-2">
+                <span class="font-bold">{{ consent.title }}</span>
+                <span v-if="consent.review_status === 'draft'" class="rounded-full bg-warn-soft px-2 py-0.5 text-xs font-bold text-warn" data-consent-draft>草稿・待院方審核</span>
+              </p>
+              <p class="text-ink-soft">{{ consent.notice }}</p>
+              <dl class="space-y-1.5">
+                <div v-for="s in consent.sections" :key="s.heading">
+                  <dt class="font-bold">{{ s.heading }}</dt>
+                  <dd>{{ s.text }}</dd>
+                </div>
+              </dl>
+              <p v-if="consentError" class="text-critical" role="alert">{{ consentError.message }}</p>
+              <button type="button" class="min-h-12 w-full rounded-full border border-care px-5 font-bold text-care hover:bg-care-soft disabled:opacity-60"
+                :disabled="consentBusy" data-consent-accept @click="acceptConsent">我已閱讀，同意上傳皮膚照片</button>
+              <p class="text-ink-soft">不同意也沒關係，您仍可以只用文字記錄。</p>
+            </div>
+            <template v-else>
+              <SkinPhotoPicker v-model="photos" :patient-id="patientId" :max="photoSettings.max_per_record" :body-sites="photoSettings.body_sites" />
+              <p class="text-xs text-ink-soft">照片送出後不會立即有人查看；上傳照片不代表醫護人員已經看過。<button type="button"
+                class="ml-1 underline underline-offset-2" data-consent-revoke @click="revokeConsent">撤回照片同意</button></p>
+            </template>
+          </section>
+
           <label class="block">
             <span class="text-lg font-bold">補充說明（選填）</span>
             <span class="block text-sm text-ink-soft">例如：哪個部位、什麼時候開始、有沒有擦藥。</span>
@@ -170,6 +264,7 @@ onMounted(() => {
           <p v-if="missing" class="rounded-xl bg-critical-soft px-4 py-3 text-critical" role="alert" data-skin-missing>
             請至少回答一題，或勾選「不確定，請護理師協助評估」。
           </p>
+          <p v-if="photoBlocked" class="rounded-xl bg-warn-soft px-4 py-3 text-warn" role="alert" data-photo-blocked>{{ photoBlocked }}</p>
           <p v-if="submitError" class="rounded-xl bg-critical-soft px-4 py-3 text-critical" role="alert" data-skin-error>{{ submitError.message }}</p>
           <button type="submit" class="min-h-12 w-full rounded-full bg-care px-6 text-lg font-bold text-white hover:bg-care/90 disabled:opacity-60"
             :disabled="state === 'submitting'" data-skin-submit>{{ state === 'submitting' ? '送出中…' : '送出' }}</button>
@@ -185,10 +280,21 @@ onMounted(() => {
             <p class="font-bold">{{ when(r.recorded_at) }}</p>
             <p>{{ describe(r) }}</p>
             <p v-if="r.notes" class="mt-1 whitespace-pre-line rounded-lg bg-mist px-3 py-2 text-sm">{{ r.notes }}</p>
+            <ul v-if="r.photos?.length" class="mt-2 flex gap-2" data-skin-record-photos>
+              <li v-for="ph in r.photos" :key="ph.id">
+                <button type="button" class="block size-16 overflow-hidden rounded-lg border border-line" :aria-label="`放大照片${ph.body_site_label ? `（${ph.body_site_label}）` : ''}`"
+                  @click="viewing = { photo: ph, answers: describe(r), notes: r.notes ?? '' }">
+                  <SkinPhoto :photo-id="ph.id" />
+                </button>
+              </li>
+            </ul>
             <p class="mt-1 text-sm text-ink-soft">{{ r.review_status === 'reviewed' ? '護理師已看過這筆紀錄' : '護理師會在服務時間內查看' }}</p>
           </li>
         </ul>
       </section>
+
+      <SkinPhotoHistory v-if="photoSettings?.view_enabled" ref="photoHistory" :patient-id="patientId" title="我的皮膚照片" />
+      <SkinPhotoViewer v-if="viewing" :photo="viewing.photo" :answers="viewing.answers" :notes="viewing.notes" @close="viewing = null" />
     </main>
 
     <PatientBottomNav active="symptom-report" :unread="unread" />

@@ -7,6 +7,7 @@
 import { ruleOn, threshold } from '@/mock/alertRules'
 import { nowIso } from '@/mock/clock'
 import { addMockSymptomRecord, mockListRecordsStore } from '@/mock/nurseReview'
+import { attachMockPhotos, checkMockPhotos } from '@/mock/photos'
 import { applyToRiskSummary, patientDashboards } from '@/mock/patientDashboards'
 import { MockApiError } from '@/mock/patients'
 
@@ -138,6 +139,7 @@ let nextId = 1000
 function submitMockDailyReport(patientId, body) {
   const form = mockForms.rt_daily_report
   const invalid = (details) => new MockApiError(400, 'VALIDATION_ERROR', '症狀回報內容有誤', details)
+  if (body.photos != null) throw invalid([{ field: 'photos', issue: 'this form does not take photos' }])
   const given = Object.fromEntries((body.values ?? []).map((v) => [v.definition_code, v]))
   const details = []
   const values = []
@@ -181,7 +183,7 @@ function submitMockDailyReport(patientId, body) {
   }
   return {
     id, patient_id: patientId, form: { code: form.code, version: form.version }, recorded_at: now, cycle_day: cycleDay, source: 'patient_app',
-    review_status: 'submitted', record_status: 'final', amends_id: null, notes: null, values, triggered_alerts: [],
+    review_status: 'submitted', record_status: 'final', amends_id: null, notes: null, values, photos: [], triggered_alerts: [],
   }
 }
 
@@ -215,12 +217,14 @@ function submitMockSkinReport(patientId, body) {
   }
   if (details.length) throw invalid(details)
   values.sort((a, b) => order.indexOf(a.definition_code) - order.indexOf(b.definition_code))
+  const checkedPhotos = checkMockPhotos(patientId, body.photos) // before anything is created (one transaction)
   const w = patientDashboards[patientId]?.widgets
   const cycleDay = w?.['treatment-progress']?.current_cycle?.cycle_day ?? null
   const now = nowIso()
   const notes = body.notes?.trim() || null
   const id = nextId++
-  addMockSymptomRecord(patientId, { id, recorded_at: now, cycle_day: cycleDay, form: { code: form.code, version: form.version }, notes, values: structuredClone(values), alerts: [] })
+  const photos = attachMockPhotos(id, checkedPhotos)
+  addMockSymptomRecord(patientId, { id, recorded_at: now, cycle_day: cycleDay, form: { code: form.code, version: form.version }, notes, values: structuredClone(values), alerts: [], photos })
   if (w) {
     const nv = w['nurse-view']
     const scored = [...values].sort((a, b) => b.score - a.score)
@@ -235,7 +239,7 @@ function submitMockSkinReport(patientId, body) {
   }
   return {
     id, patient_id: patientId, form: { code: form.code, version: form.version }, recorded_at: now, cycle_day: cycleDay, source: 'patient_app',
-    review_status: 'submitted', record_status: 'final', amends_id: null, notes, values, triggered_alerts: [],
+    review_status: 'submitted', record_status: 'final', amends_id: null, notes, values, photos, triggered_alerts: [],
   }
 }
 
@@ -365,6 +369,7 @@ export function submitMockReport(patientId, body) {
     record_status: 'final',
     amends_id: null,
     values,
+    photos: [],
     triggered_alerts: triggered.map(({ _title, _nurseMessage, ...t }) => t),
   }
 }

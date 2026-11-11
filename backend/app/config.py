@@ -13,6 +13,11 @@ def _csv(name, default=""):
     return [item.strip().rstrip("/") for item in os.environ.get(name, default).split(",") if item.strip()]
 
 
+def _flag(name, default):
+    raw = os.environ.get(name)
+    return default if raw is None or not raw.strip() else raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _database_url():
     url = os.environ.get("DATABASE_URL", "sqlite:///app.db")
     # Some hosts hand out "postgres://"; SQLAlchemy only accepts "postgresql://".
@@ -111,9 +116,39 @@ class Config:
     EMAIL_VERIFICATION_HOURS = 24
     EMAIL_VERIFICATION_RESEND_SECONDS = 60
 
+    # 皮膚照片 (Phase 1b; docs/skin-photo-deployment.md). Off unless every condition holds (see
+    # app/services/photo_storage.py: photo_feature_status): PHOTO_UPLOADS_ENABLED, a storage backend
+    # allowed in this environment, and — in staging / production — a hospital-approved consent text
+    # (PHOTO_CONSENT_APPROVED_VERSION = the version in app/modules/photo/consent.py). Never falls back
+    # to another backend: an unusable configuration disables uploads.
+    PHOTO_UPLOADS_ENABLED = _flag("PHOTO_UPLOADS_ENABLED", False)
+    # "local" = LocalPrivateStorage (development / tests only, refused in staging / production);
+    # "object" = PrivateObjectStorage (S3-compatible private bucket; needs the PHOTO_OBJECT_* settings)
+    PHOTO_STORAGE_BACKEND = os.environ.get("PHOTO_STORAGE_BACKEND", "").strip().lower()
+    PHOTO_LOCAL_DIR = os.environ.get("PHOTO_LOCAL_DIR")  # default: <instance>/private-photos (git-ignored)
+    PHOTO_OBJECT_BUCKET = os.environ.get("PHOTO_OBJECT_BUCKET")
+    PHOTO_OBJECT_REGION = os.environ.get("PHOTO_OBJECT_REGION")
+    PHOTO_OBJECT_ENDPOINT_URL = os.environ.get("PHOTO_OBJECT_ENDPOINT_URL")  # optional (non-AWS S3-compatible)
+    PHOTO_OBJECT_KMS_KEY_ID = os.environ.get("PHOTO_OBJECT_KMS_KEY_ID")  # customer-managed key (SSE-KMS)
+    PHOTO_OBJECT_ACCESS_KEY_ID = os.environ.get("PHOTO_OBJECT_ACCESS_KEY_ID")  # secret: environment only
+    PHOTO_OBJECT_SECRET_ACCESS_KEY = os.environ.get("PHOTO_OBJECT_SECRET_ACCESS_KEY")  # secret: environment only
+    PHOTO_CONSENT_APPROVED_VERSION = os.environ.get("PHOTO_CONSENT_APPROVED_VERSION")
+    PHOTO_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+    PHOTO_MAX_PIXELS = 40_000_000  # checked before decoding (decompression bombs)
+    PHOTO_MIN_SIDE = 64
+    PHOTO_FULL_MAX_SIDE = 1600
+    PHOTO_THUMB_MAX_SIDE = 320
+    PHOTO_MAX_PER_RECORD = 3
+    PHOTO_MAX_PER_DAY = 20  # uploads per patient per Asia/Taipei day (pending ones count too)
+    PHOTO_MAX_PER_10_MINUTES = 8
+    PHOTO_PENDING_TTL_HOURS = 24  # pending photos older than this are discarded by the clean-up
+
 
 class DevelopmentConfig(Config):
     DEBUG = True
+    # photos: private files under the git-ignored instance folder (or PHOTO_LOCAL_DIR); draft consent text
+    PHOTO_UPLOADS_ENABLED = _flag("PHOTO_UPLOADS_ENABLED", True)
+    PHOTO_STORAGE_BACKEND = os.environ.get("PHOTO_STORAGE_BACKEND", "local").strip().lower()
     EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "capture").strip().lower()
     EMAIL_CAPTURE_DIR = os.environ.get("EMAIL_CAPTURE_DIR", "instance/email-outbox")  # git-ignored
 
@@ -144,6 +179,9 @@ class TestingConfig(Config):
     JWT_SECRET_KEY = "testing-only-jwt-secret-key-at-least-32-bytes"
     EMAIL_PROVIDER = "capture"  # in memory; tests read the captured messages
     EMAIL_CAPTURE_DIR = None
+    PHOTO_UPLOADS_ENABLED = True
+    PHOTO_STORAGE_BACKEND = "local"
+    PHOTO_LOCAL_DIR = None  # a fresh temporary directory per app (create_app)
 
 
 config_by_name = {

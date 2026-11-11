@@ -62,6 +62,7 @@ def create_record():
                 "form_code": record.form.code,
                 "definition_codes": [v.definition.code for v in record.values],
                 "alert_rule_codes": [t.rule.code for t in triggered if t.notified],
+                **({"photo_count": len(record.photos)} if record.photos else {}),
             },
         )
         return record.id, {"data": serialize_record(record, serialize_triggered(triggered))}, 201

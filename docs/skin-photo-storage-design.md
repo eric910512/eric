@@ -1,6 +1,7 @@
-# 皮膚照片追蹤：私有物件儲存設計（Phase 1b，**設計稿，尚未實作**）
+# 皮膚照片追蹤：私有物件儲存設計（Phase 1b）
 
-> 狀態：設計提案，待院方資訊安全、法務與臨床確認。本文件不建立任何雲端資源、金鑰或 Render 環境變數。
+> 狀態（2026-11-11）：**程式已實作於 `feature/skin-photo-upload`，正式環境預設關閉**——儲存介面、`LocalPrivateStorage`（僅開發／測試）、`PrivateObjectStorage`（S3 相容 adapter，未連線任何雲端）、上傳／讀取 API、同意紀錄。啟用條件與設定見 `skin-photo-deployment.md`。供應商、區域、保存政策仍待院方資訊安全、法務與臨床確認。本文件不建立任何雲端資源、金鑰或 Render 環境變數。
+> 與原設計的差異：v1 存取採後端代理（已實作）；照片 metadata 表另含 `thumb_storage_key`、`thumb_file_size`、`source_sha256`（重複上傳判斷）；`delete_reason` 目前只有 `removed_before_submit`、`expired_unattached` 兩種，已送出的照片程式不提供刪除（待保存政策）。
 > 標示「待確認」的事實（法規條文適用性、雲端區域、價格）請以官方文件與院方意見為準。
 
 ## 1. 前提

@@ -22,6 +22,7 @@ from app.models.enums import (
     SymptomValueType,
 )
 from app.services.alert_engine import evaluate_symptom_record, replay_symptom_record
+from app.modules.photo.services import attach_photos, parse_photo_specs, record_photos
 from app.modules.notification.services import resolve_source_alerts
 from app.services.treatment import active_plan_and_cycle, cycle_nadir
 
@@ -260,6 +261,11 @@ def create_symptom_record(patient, user, body, correction_of=None):
         # a correction may concern a report made before a question became required
         if form_item.is_required and code not in seen and correction_of is None:
             errors.add("values", f"'{code}' is required")
+    photo_specs = []
+    if correction_of is None:
+        photo_specs = parse_photo_specs(body, form, errors)  # 皮膚照片: attached below, same transaction
+    elif body.get("photos") is not None:
+        errors.add("photos", "a correction keeps the photos of the original report")
     errors.raise_if_any()
     if form.code in ONCE_PER_DAY_FORMS and correction_of is None:
         _ensure_not_reported_today(patient, form, recorded_at)
@@ -296,6 +302,7 @@ def create_symptom_record(patient, user, body, correction_of=None):
         record.values.append(value)
     db.session.add(record)
     db.session.flush()
+    attach_photos(record, patient, user, photo_specs)
 
     triggered = evaluate_symptom_record(record, patient, **_alert_context(record, patient))
     return record, triggered
@@ -387,6 +394,7 @@ def serialize_record(record, triggered_alerts):
         "amends_id": record.amends_id,  # Sprint 5: set on a corrected version
         "notes": record.notes,
         "values": [serialize_value(v) for v in record.ordered_values()],
+        "photos": record_photos(record),  # 皮膚照片: metadata only, images via GET /symptom-photos/{id}/content
         "triggered_alerts": triggered_alerts,
     }
 

@@ -45,6 +45,7 @@ def create_app(config_name=None):
 
     app = Flask(__name__)
     app.config.from_object(config_by_name[config_name])
+    app.config["CONFIG_NAME"] = config_name  # e.g. photo storage: local files are refused in staging / production
     if config_name in PRODUCTION_LIKE:
         problems = _deployment_problems(app)
         if problems:
@@ -55,6 +56,9 @@ def create_app(config_name=None):
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops, x_host=hops)
 
     _register_extensions(app)
+    from app.services.photo_storage import init_photos
+
+    init_photos(app)
     init_api(app)
     _register_blueprints(app)
     _register_commands(app)
@@ -106,6 +110,7 @@ def _register_blueprints(app):
     from app.modules.admin import admin_bp
     from app.modules.auth import auth_bp
     from app.modules.chat import chat_bp
+    from app.modules.photo import photo_bp
     from app.modules.chemotherapy import chemotherapy_bp
     from app.modules.dashboard import dashboard_bp
     from app.modules.labs import labs_bp
@@ -128,9 +133,12 @@ def _register_blueprints(app):
     app.register_blueprint(labs_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(chat_bp)
+    app.register_blueprint(photo_bp)
 
 
 def _register_commands(app):
+    from app.modules.photo.cli import photo_cli
     from app.seeds.cli import seed_cli
 
     app.cli.add_command(seed_cli)
+    app.cli.add_command(photo_cli)

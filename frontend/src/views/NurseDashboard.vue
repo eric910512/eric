@@ -10,6 +10,7 @@ import NurseNav from '@/components/NurseNav.vue'
 import NurseNotificationList from '@/components/NurseNotificationList.vue'
 import PatientSummary from '@/components/PatientSummary.vue'
 import PatientTimeline from '@/components/PatientTimeline.vue'
+import SkinPhotoHistory from '@/components/SkinPhotoHistory.vue'
 import SymptomReviewPanel from '@/components/SymptomReviewPanel.vue'
 import SymptomTrend from '@/components/SymptomTrend.vue'
 import TreatmentProgress from '@/components/TreatmentProgress.vue'
@@ -225,6 +226,9 @@ watch(selectedId, (id) => id && store.fetchPatientDashboard(id), { immediate: tr
             <SymptomTrend :trend="patient.widgets['symptom-trend']" />
 
             <SymptomReviewPanel :patient-id="selectedId" :today="today" :timezone="TZ" />
+
+            <!-- 皮膚照片 (Phase 1b): the backend lists them only for a currently assigned patient -->
+            <SkinPhotoHistory :key="selectedId" :patient-id="selectedId" title="皮膚照片紀錄" />
 
             <PatientTimeline :patient-id="selectedId" audience="staff" :timezone="TZ" title="病人照護時間軸" />
           </template>

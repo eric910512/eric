@@ -355,7 +355,7 @@ export function mockListRecords(patientId, { reviewStatus = 'all', formCode = nu
   const all = (records[patientId] ?? []).filter((r) => r.record_status === 'final' && (!formCode || r.form?.code === formCode))
   const items = reviewStatus === 'all' ? all : reviewStatus === 'follow_up' ? all.filter(followUp) : all.filter((r) => r.review_status === reviewStatus)
   return {
-    data: clone(items),
+    data: clone(items).map((r) => ({ photos: [], ...r })), // 皮膚照片: metadata of the report's photos
     meta: {
       page: 1, per_page: 50, total: items.length,
       submitted: all.filter((r) => r.review_status === 'submitted').length,

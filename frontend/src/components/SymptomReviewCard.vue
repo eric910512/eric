@@ -3,6 +3,8 @@ import { computed, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import NoteComposer from '@/components/NoteComposer.vue'
+import SkinPhoto from '@/components/SkinPhoto.vue'
+import SkinPhotoViewer from '@/components/SkinPhotoViewer.vue'
 import { useNurseStore } from '@/stores/nurse'
 import { addDays, formatShortDate, formatWhen, localDate } from '@/utils/format'
 
@@ -18,6 +20,9 @@ const props = defineProps({
 })
 
 const store = useNurseStore()
+const viewing = ref(null) // photo shown larger (皮膚照片)
+const answersText = computed(() => props.record.values.map((v) => (v.option_label !== undefined ? `${v.label}：${v.option_label}`
+  : v.value_boolean !== undefined && v.value_boolean !== null ? `${v.label}：${v.value_boolean ? '有' : '沒有'}` : `${v.label} ${v.score ?? v.value_numeric}`)).join('、'))
 const open = ref(false)
 const busy = ref(false)
 const error = ref(null)
@@ -117,6 +122,18 @@ async function submit() {
     <p v-if="record.notes" class="mt-2 whitespace-pre-line rounded-lg bg-mist px-3 py-2 text-sm" data-record-notes>
       <span class="font-medium">{{ record.source === 'nurse' ? '備註' : '病人補充說明' }}：</span>{{ record.notes }}
     </p>
+
+    <!-- 皮膚照片: thumbnails; click → larger view with the upload date and the patient's answers -->
+    <ul v-if="record.photos?.length" class="mt-2 flex flex-wrap gap-2" aria-label="病人上傳的照片" data-record-photos>
+      <li v-for="ph in record.photos" :key="ph.id">
+        <button type="button" class="block size-20 overflow-hidden rounded-lg border border-line" :aria-label="`放大照片${ph.body_site_label ? `（${ph.body_site_label}）` : ''}`"
+          :data-record-photo="ph.id" @click="viewing = ph">
+          <SkinPhoto :photo-id="ph.id" />
+        </button>
+        <p class="mt-0.5 max-w-20 truncate text-xs" :class="ph.body_site_label ? 'text-ink-soft' : 'font-bold text-warn'">{{ ph.body_site_label ?? '位置未指定' }}</p>
+      </li>
+    </ul>
+    <SkinPhotoViewer v-if="viewing" :photo="viewing" :answers="answersText" :notes="record.notes ?? ''" @close="viewing = null" />
 
     <ul v-if="record.alerts.length" class="mt-2 space-y-1 text-sm">
       <li v-for="a in record.alerts" :key="a.event_key" class="flex items-center gap-1.5">
