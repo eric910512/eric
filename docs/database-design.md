@@ -21,6 +21,7 @@
   - Email 驗證連結使用既有 `auth_tokens`（`token_type = email_verification`、只存雜湊、24 小時、`used_at` 一次性；更換 Email 或重寄時舊的列設定 `revoked_at`），無 schema 變更。
   - 身高沿用 `patient_profiles.height_cm`；體重沿用 `vital_signs.weight_kg`（病人自行輸入：`source = patient_app`、`recorded_by` = 病人帳號，append-only 保留歷史）；**BMI 不存 DB**（最新體重 ÷ 身高² 即時計算）。
 - **每日症狀與自我照護回報（2026-10-06）**：data migration `f1a7c3d2b9e4`（**無 schema 變更**）在既有 `symptom_categories` / `symptom_definitions` / `symptom_definition_options` / `symptom_forms` / `symptom_form_items` 新增 `rt_daily_report` 表單的資料（2 個分類、9 題、13 個選項）；已存在的列不覆寫，可重複執行；downgrade 只在沒有任何回報使用時移除。開發 seed 以 `app/seeds/rt_daily_report.py` 建立相同資料（測試比對兩者一致）。每日一筆的限制在應用層（不需新增欄位或唯一鍵）。第一版所有病人都看得到這份表單（未使用 Phase 2 `symptom_form_targets`）。
+- **放射治療皮膚反應自我評估（2026-11，Phase 1a）**：data migration `c3e9a1f4b7d2`（**無 schema 變更**）新增 `rt_skin_self_assessment` 表單資料：1 個分類（`skin_self_assessment`）、3 題新題目（`skin_itch`、`skin_broken_exudate`、`skin_assist_request`，5 個選項）、6 個表單項目（其中 3 題**重用** `rt_daily_report` 的 `rt_dermatitis_redness`、`rt_dermatitis_desquamation`、`rt_pain_skin`，只查找、不修改），全部選填、非每日一次、沒有警示規則。已存在的列不覆寫；downgrade 只在沒有回報使用時移除，且不碰被重用的題目與 `rt_daily_report`。開發 seed `app/seeds/skin_self_assessment.py`（測試比對兩者一致）。「需追蹤」用既有 `nursing_assessments.next_follow_up_at`。照片（Phase 1b）尚未建表，設計見 `docs/skin-photo-storage-design.md`。
 - 一致性：`flask --app run db check` 無差異；由 migration 建立的資料庫與 `db.create_all()` 逐欄比對（欄位、預設值、索引、唯一鍵、外鍵）完全相同。
 
 ## 變更摘要（v3 → v3.1）

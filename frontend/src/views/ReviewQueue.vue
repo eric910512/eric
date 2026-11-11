@@ -48,6 +48,7 @@ onMounted(() => {
             <li v-for="s in q.symptoms" :key="s.id">
               <RouterLink :to="{ name: 'nurse', params: { patientId: s.patient.id } }" class="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3 hover:bg-mist">
                 <span class="font-bold">{{ s.patient.display_name }}</span><span class="text-ink-soft">{{ s.patient.patient_code }}</span>
+                <span v-if="s.form?.code === 'rt_skin_self_assessment'" class="rounded-full bg-care-soft px-2 py-0.5 text-sm font-bold text-care" data-queue-form>皮膚自我評估</span>
                 <span class="min-w-0 flex-1">{{ s.summary }}</span>
                 <span v-if="s.open_alert_count" class="rounded-full bg-warn-soft px-2 py-0.5 text-sm font-bold text-warn">警示 {{ s.open_alert_count }}</span>
                 <span class="text-sm text-ink-soft">{{ when(s.recorded_at) }}</span>

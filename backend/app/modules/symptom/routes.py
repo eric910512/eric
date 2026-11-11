@@ -4,6 +4,7 @@ from app.core.api import APIError, ok, query_choice, query_int
 from app.core.audit import record_patient_view
 from app.core.audit import record_data_event
 from app.core.auth import ensure_can_view_patient, require_auth, resolve_patient
+from app.core.timeutil import iso_utc
 from app.core.idempotency import run_idempotent
 from app.extensions import db
 from app.models import SymptomRecord
@@ -11,6 +12,7 @@ from app.models.enums import AuditAction, ReviewStatus, RoleName
 from app.modules.admin.services import form_payload, list_forms as admin_forms, update_form as admin_update_form
 from app.modules.symptom import symptom_bp
 from app.modules.symptom.services import (
+    FOLLOW_UP,
     create_symptom_record,
     get_active_form,
     list_patient_records,
@@ -82,19 +84,26 @@ def create_record():
 def patient_records(patient_id):
     """A patient's symptom reports with review state (newest first).
 
-    ``patient_id`` is a public id or ``me``. Query: review_status=all|submitted|reviewed, page, per_page,
+    ``patient_id`` is a public id or ``me``. Query: review_status=all|submitted|reviewed|follow_up
+    (follow_up = reviewed with a planned follow-up, 需追蹤), page, per_page,
     form_code (optional: one form only, e.g. rt_daily_report).
     Patients see their own records without the nurse's internal note.
     """
     patient = resolve_patient(patient_id)
     ensure_can_view_patient(patient)
+    review_status = query_choice(request.args, "review_status", "all", ("all", ReviewStatus.SUBMITTED, ReviewStatus.REVIEWED, FOLLOW_UP))
+    if review_status == FOLLOW_UP and g.current_user.role_name == RoleName.PATIENT:
+        # the follow-up plan is part of the nurse's internal assessment (like the review note)
+        raise APIError(403, "FORBIDDEN", "需追蹤清單僅供醫護人員使用")
     records, meta = list_patient_records(
         patient,
-        review_status=query_choice(request.args, "review_status", "all", ("all", ReviewStatus.SUBMITTED, ReviewStatus.REVIEWED)),
+        review_status=review_status,
         page=query_int(request.args, "page", 1, 1, 10_000),
         per_page=query_int(request.args, "per_page", 20, 1, 100),
         form_code=request.args.get("form_code") or None,
     )
+    if g.current_user.role_name == RoleName.PATIENT:
+        meta.pop("follow_up")
     record_patient_view(patient, resource_type="symptom_records")
     db.session.commit()
     role = g.current_user.role_name
@@ -120,7 +129,8 @@ def review(record_id):
     patient = record.patient
     record_data_event(
         AuditAction.CREATE, "nursing_assessments", assessment.id, patient=patient,
-        changes={"symptom_record_id": record.id, "assessment_type": assessment.assessment_type, "sign_status": "signed"},
+        changes={"symptom_record_id": record.id, "assessment_type": assessment.assessment_type, "sign_status": "signed",
+                 **({"next_follow_up_at": iso_utc(assessment.next_follow_up_at)} if assessment.next_follow_up_at else {})},
     )
     record_data_event(
         AuditAction.UPDATE, "symptom_records", record.id, patient=patient,

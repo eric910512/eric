@@ -56,6 +56,16 @@ watch(() => widgets.value?.['symptom-quick-report']?.today_record_id, (id, old) 
 
       <DailySelfCareReport id="daily-report" class="scroll-mt-20" :patient-id="patientId" :timezone="TZ" @submitted="portal.fetchRecords(patientId)" />
 
+      <!-- 放射治療皮膚反應自我評估 (Phase 1a): its own page, independent of the daily report -->
+      <RouterLink :to="{ name: 'patient-skin' }" class="flex items-center gap-4 rounded-2xl border border-line bg-surface p-5 hover:bg-care-soft" data-skin-entry>
+        <span class="grid size-12 shrink-0 place-items-center rounded-full bg-care-soft text-care"><AppIcon name="hand" /></span>
+        <span class="min-w-0 flex-1">
+          <span class="block text-lg font-bold">皮膚自我評估</span>
+          <span class="block text-ink-soft">放射治療期間，記錄皮膚發紅、脫皮、搔癢等情形</span>
+        </span>
+        <AppIcon name="chevron" class="shrink-0 text-ink-soft" />
+      </RouterLink>
+
       <section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="my-reports" data-my-reports :data-loaded="!!portal.records">
         <h2 id="my-reports" class="text-lg font-bold">我的回報</h2>
         <p v-if="portal.errors.records" class="mt-2 text-critical" role="alert">{{ portal.errors.records.message }}</p>

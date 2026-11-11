@@ -52,7 +52,7 @@ def _ensure_final(record):
 
 def _symptom_body(r):
     from app.modules.symptom.services import serialize_value
-    values = [{k: v for k, v in serialize_value(x).items() if k not in ("label", "score", "ctcae_grade")} for x in r.values]
+    values = [{k: v for k, v in serialize_value(x).items() if k not in ("label", "score", "ctcae_grade")} for x in r.ordered_values()]
     return {"form_code": r.form.code if r.form else None, "recorded_at": iso_utc(r.recorded_at), "notes": r.notes, "values": values}
 
 
@@ -64,7 +64,7 @@ def _symptom_create(patient, nurse, body, original):
 def _symptom_payload(r):
     from app.modules.symptom.services import serialize_value
     return {"recorded_at": iso_utc(r.recorded_at), "notes": r.notes, "review_status": r.review_status,
-            "values": [serialize_value(v) for v in r.values], "reported_by": _person(r.reporter)}
+            "values": [serialize_value(v) for v in r.ordered_values()], "reported_by": _person(r.reporter)}
 
 
 VITAL_EXTRA = ("temperature_site", "bp_measure_site", "notes")

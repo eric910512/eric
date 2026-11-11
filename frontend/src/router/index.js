@@ -24,6 +24,7 @@ import PatientDetail from '@/views/PatientDetail.vue'
 import PatientList from '@/views/PatientList.vue'
 import PatientNotifications from '@/views/PatientNotifications.vue'
 import PatientProfile from '@/views/PatientProfile.vue'
+import PatientSkinAssessment from '@/views/PatientSkinAssessment.vue'
 import PatientSymptoms from '@/views/PatientSymptoms.vue'
 import ReviewQueue from '@/views/ReviewQueue.vue'
 import VerifyEmail from '@/views/VerifyEmail.vue'
@@ -63,6 +64,13 @@ export const router = createRouter({
       name: 'patient-symptoms',
       component: PatientSymptoms,
       meta: { title: '症狀回報', requiresAuth: true, roles: ['patient'] },
+    },
+    {
+      // 放射治療皮膚反應自我評估 (Phase 1a, text only)
+      path: '/patient/skin',
+      name: 'patient-skin',
+      component: PatientSkinAssessment,
+      meta: { title: '皮膚自我評估', requiresAuth: true, roles: ['patient'] },
     },
     {
       path: '/patient/notifications',

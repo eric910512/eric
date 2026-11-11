@@ -5,7 +5,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import SymptomReviewCard from '@/components/SymptomReviewCard.vue'
 import { useNurseStore } from '@/stores/nurse'
 
-/** Symptom reports of one patient, split into 待審閱 / 已審閱. */
+/** Symptom reports of one patient, split into 待審閱 / 需追蹤 (reviewed with a planned follow-up) / 已審閱. */
 const props = defineProps({
   patientId: { type: String, required: true },
   today: { type: String, required: true },
@@ -27,7 +27,7 @@ watch([() => props.patientId, tab], () => store.fetchRecords(props.patientId, ta
       <h2 class="text-lg font-bold">症狀審閱</h2>
       <div class="ml-auto flex rounded-full border border-line p-0.5" role="tablist">
         <button
-          v-for="t in [{ k: 'submitted', l: '待審閱', c: list?.meta.submitted }, { k: 'reviewed', l: '已審閱', c: list?.meta.reviewed }]"
+          v-for="t in [{ k: 'submitted', l: '待審閱', c: list?.meta.submitted }, { k: 'follow_up', l: '需追蹤', c: list?.meta.follow_up }, { k: 'reviewed', l: '已審閱', c: list?.meta.reviewed }]"
           :key="t.k"
           type="button"
           role="tab"
@@ -45,7 +45,7 @@ watch([() => props.patientId, tab], () => store.fetchRecords(props.patientId, ta
         <div v-for="n in 2" :key="n" class="h-24 animate-pulse rounded-xl bg-mist" />
       </div>
       <p v-else-if="!list.items.length" class="text-ink-soft">
-        {{ tab === 'submitted' ? '沒有待審閱的症狀回報。' : '還沒有已審閱的回報。' }}
+        {{ tab === 'submitted' ? '沒有待審閱的症狀回報。' : tab === 'follow_up' ? '沒有需追蹤的回報。' : '還沒有已審閱的回報。' }}
       </p>
       <div v-else class="space-y-3">
         <SymptomReviewCard

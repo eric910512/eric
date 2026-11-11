@@ -348,15 +348,19 @@ export function closeNotifications(rows, note) {
 /** Every record of one patient (any status) — the once-per-day check of the daily report mock. */
 export const mockListRecordsStore = (patientId) => records[patientId] ?? []
 
+// 需追蹤 = reviewed with a planned follow-up (review.next_follow_up_at), like review_status=follow_up of the API
+const followUp = (r) => r.review_status === 'reviewed' && !!r.review?.next_follow_up_at
+
 export function mockListRecords(patientId, { reviewStatus = 'all', formCode = null } = {}) {
   const all = (records[patientId] ?? []).filter((r) => r.record_status === 'final' && (!formCode || r.form?.code === formCode))
-  const items = reviewStatus === 'all' ? all : all.filter((r) => r.review_status === reviewStatus)
+  const items = reviewStatus === 'all' ? all : reviewStatus === 'follow_up' ? all.filter(followUp) : all.filter((r) => r.review_status === reviewStatus)
   return {
     data: clone(items),
     meta: {
       page: 1, per_page: 50, total: items.length,
       submitted: all.filter((r) => r.review_status === 'submitted').length,
       reviewed: all.filter((r) => r.review_status === 'reviewed').length,
+      follow_up: all.filter(followUp).length,
     },
   }
 }
@@ -366,6 +370,14 @@ export function mockReview(recordId, payload) {
   if (!record) throw new Error('找不到症狀紀錄')
   if (record.review_status === 'reviewed') {
     throw Object.assign(new Error(`這筆紀錄已由${record.reviewed_by.display_name}審閱`), { code: 'INVALID_STATE' })
+  }
+  const followUpAt = payload.next_follow_up_at ?? null
+  if (followUpAt !== null) {
+    const at = Date.parse(followUpAt)
+    const startOfToday = new Date(now()).setUTCHours(0, 0, 0, 0)
+    if (!/(Z|[+-]\d{2}:\d{2})$/.test(followUpAt) || Number.isNaN(at) || at < startOfToday || at > Date.parse(now()) + 180 * 86400000) {
+      throw Object.assign(new Error('追蹤日期需在今天到 180 天內'), { code: 'VALIDATION_ERROR' })
+    }
   }
   Object.assign(record, {
     review_status: 'reviewed',
@@ -380,6 +392,7 @@ export function mockReview(recordId, payload) {
       assessment_type: payload.assessment_type ?? 'phone_follow_up',
       action_note: payload.action_note,
       risk_level: payload.risk_level ?? null,
+      next_follow_up_at: followUpAt ? new Date(followUpAt).toISOString() : null, // set → 需追蹤
     },
   })
   let resolved = 0

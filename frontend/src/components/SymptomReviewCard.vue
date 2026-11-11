@@ -4,7 +4,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import NoteComposer from '@/components/NoteComposer.vue'
 import { useNurseStore } from '@/stores/nurse'
-import { formatWhen } from '@/utils/format'
+import { addDays, formatShortDate, formatWhen, localDate } from '@/utils/format'
 
 /**
  * One symptom report for nurse review: the answers, the alerts it raised, and either the
@@ -21,13 +21,21 @@ const store = useNurseStore()
 const open = ref(false)
 const busy = ref(false)
 const error = ref(null)
-const form = reactive({ action_note: '', assessment_type: 'phone_follow_up', resolve_alerts: true, grades: {} })
+const form = reactive({ action_note: '', assessment_type: 'phone_follow_up', resolve_alerts: true, grades: {}, follow_up: false, follow_up_date: '' })
 
 const scaleValues = computed(() => props.record.values.filter((v) => v.value_numeric !== undefined))
 // single-choice answers (e.g. 每日症狀與自我照護回報): shown as answers only — "needs attention" is the
 // existing score >= 7 rule of the 0–10 questions, no rule for options
-const choiceValues = computed(() => props.record.values.filter((v) => v.option_label !== undefined))
-const FORM_NAME = { rt_daily_report: '每日症狀與自我照護回報' }
+const SKIN_FORM = 'rt_skin_self_assessment'
+const ASSIST = 'skin_assist_request'
+const choiceValues = computed(() => props.record.values.filter((v) => v.option_label !== undefined && v.definition_code !== ASSIST))
+const FORM_NAME = { rt_daily_report: '每日症狀與自我照護回報', [SKIN_FORM]: '皮膚自我評估' }
+// 皮膚自我評估: no professional grade here yet (the standard is not confirmed — CTCAE v5.0 is only a
+// candidate, and the per-question grade column does not fit an overall dermatitis grade); optional follow-up
+const skin = computed(() => props.record.form?.code === SKIN_FORM)
+const assistRequested = computed(() => props.record.values.some((v) => v.definition_code === ASSIST))
+const followUpAt = computed(() => props.record.review?.next_follow_up_at ?? null)
+const maxFollowUp = computed(() => addDays(props.today, 180))
 const formName = computed(() => FORM_NAME[props.record.form?.code] ?? null)
 const fever = computed(() => props.record.values.find((v) => v.definition_code === 'fever'))
 const openAlerts = computed(() => props.record.alerts.filter((a) => !a.resolved))
@@ -45,6 +53,10 @@ async function submit() {
     error.value = '請填寫處置說明。'
     return
   }
+  if (form.follow_up && !form.follow_up_date) {
+    error.value = '請選擇追蹤日期。'
+    return
+  }
   busy.value = true
   error.value = null
   const ctcae = Object.entries(form.grades)
@@ -56,6 +68,8 @@ async function submit() {
       assessment_type: form.assessment_type,
       resolve_alerts: form.resolve_alerts,
       ...(ctcae.length ? { ctcae_grades: ctcae } : {}),
+      // Asia/Taipei has no daylight saving time: 09:00 local on the chosen day
+      ...(skin.value && form.follow_up ? { next_follow_up_at: `${form.follow_up_date}T09:00:00+08:00` } : {}),
     }, props.patientId)
     open.value = false
   } catch (err) {
@@ -75,9 +89,14 @@ async function submit() {
       <p v-if="formName" class="text-sm font-medium text-care" data-record-form>{{ formName }}</p>
       <span
         class="ml-auto rounded-full px-2.5 py-0.5 text-sm font-bold"
-        :class="reviewed ? 'bg-ok-soft text-ok' : 'bg-warn-soft text-warn'"
-      >{{ reviewed ? '已審閱' : '待審閱' }}</span>
+        :class="reviewed && followUpAt ? 'bg-action text-action-ink' : reviewed ? 'bg-ok-soft text-ok' : 'bg-warn-soft text-warn'"
+        :data-review-state="reviewed && followUpAt ? 'follow_up' : reviewed ? 'reviewed' : 'submitted'"
+      >{{ reviewed && followUpAt ? '需追蹤' : reviewed ? '已審閱' : '待審閱' }}</span>
     </header>
+
+    <p v-if="assistRequested" class="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-warn-soft px-3 py-1 font-bold text-warn" data-assist-request>
+      <AppIcon name="hand" :size="16" /> 病人不確定自己的狀況，請護理師協助評估
+    </p>
 
     <ul class="mt-2 flex flex-wrap gap-2">
       <li
@@ -95,6 +114,10 @@ async function submit() {
       >{{ fever.value_boolean ? '有發燒或畏寒' : '無發燒' }}</li>
     </ul>
 
+    <p v-if="record.notes" class="mt-2 whitespace-pre-line rounded-lg bg-mist px-3 py-2 text-sm" data-record-notes>
+      <span class="font-medium">{{ record.source === 'nurse' ? '備註' : '病人補充說明' }}：</span>{{ record.notes }}
+    </p>
+
     <ul v-if="record.alerts.length" class="mt-2 space-y-1 text-sm">
       <li v-for="a in record.alerts" :key="a.event_key" class="flex items-center gap-1.5">
         <AppIcon :name="a.resolved ? 'check' : 'alert'" :size="16" :class="a.resolved ? 'text-ok' : a.severity === 'critical' ? 'text-critical' : 'text-warn'" />
@@ -111,6 +134,7 @@ async function submit() {
         <span v-if="record.review">，{{ TYPE_LABEL[record.review.assessment_type] ?? record.review.assessment_type }}</span>
       </p>
       <p v-if="record.review" class="mt-0.5">{{ record.review.action_note }}</p>
+      <p v-if="followUpAt" class="mt-1 text-sm font-bold text-action-ink" data-follow-up>需追蹤：{{ formatShortDate(localDate(followUpAt, timezone)) }}</p>
     </div>
 
     <!-- review form -->
@@ -144,7 +168,22 @@ async function submit() {
           :invalid="!!error && !form.action_note.trim()"
         />
 
-        <details class="rounded-lg border border-line px-3 py-2">
+        <template v-if="skin">
+          <p class="rounded-lg bg-mist px-3 py-2 text-sm text-ink-soft" data-grade-pending>
+            皮膚反應的專業分級標準尚待院方確認（候選：CTCAE v5.0 Dermatitis radiation），本版不在此記錄分級；請在處置說明中描述評估結果。病人看不到這裡的內容。
+          </p>
+          <div class="space-y-2" data-follow-up-form>
+            <label class="flex items-center gap-2">
+              <input v-model="form.follow_up" type="checkbox" class="size-5 accent-care" data-follow-up-toggle />
+              <span class="font-medium">需要追蹤</span>
+            </label>
+            <label v-if="form.follow_up" class="flex flex-wrap items-center gap-2">
+              <span>追蹤日期</span>
+              <input v-model="form.follow_up_date" type="date" :min="today" :max="maxFollowUp" class="min-h-10 rounded-lg border border-line bg-surface px-2" data-follow-up-date />
+            </label>
+          </div>
+        </template>
+        <details v-else class="rounded-lg border border-line px-3 py-2">
           <summary class="cursor-pointer font-medium">CTCAE 分級（選填）</summary>
           <div class="mt-2 grid gap-2 sm:grid-cols-2">
             <label v-for="v in scaleValues" :key="v.definition_code" class="flex items-center justify-between gap-3">

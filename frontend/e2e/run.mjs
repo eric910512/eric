@@ -67,6 +67,7 @@ const GROUPS = [
   { suites: ['home-redesign'] },
   { suites: ['education-video'] },
   { suites: ['chat'] },
+  { suites: ['skin-assessment'] },
   // 1-minute access tokens (the existing JWT_ACCESS_TOKEN_MINUTES setting): real expiry → refresh
   { suites: ['refresh'], env: { JWT_ACCESS_TOKEN_MINUTES: '1' } },
   ...(PROD ? [{ suites: ['deploy'] }] : []),

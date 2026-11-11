@@ -267,21 +267,30 @@ def _symptoms(ctx):
     ).scalars().all()
     events = []
     for r in rows:
-        values, parts, fever, top = [], [], False, 0
-        for v in r.values:
+        values, parts, fever, top, ranked = [], [], False, 0, []
+        for v in r.ordered_values():
             d = v.definition
+            score = float(v.score) if v.score is not None else None
             if d.value_type == SymptomValueType.BOOLEAN:
                 fever = fever or bool(v.value_boolean)
                 values.append({"code": d.code, "label": d.name_zh, "value": "有" if v.value_boolean else "沒有"})
                 if v.value_boolean:
                     parts.append(d.name_zh)
+            elif d.value_type == SymptomValueType.SINGLE_CHOICE:
+                # the chosen option's own text (深紅 / 有 / 是), never its internal score; no "/ 10"
+                label = v.option.label_zh if v.option else None
+                values.append({"code": d.code, "label": d.name_zh, "value": label, "option_code": v.option.value_code if v.option else None})
+                if score is not None:
+                    top = max(top, score)
+                    ranked.append((score, f"{d.name_zh}：{label}"))
             else:
-                score = float(v.score) if v.score is not None else None
                 values.append({"code": d.code, "label": d.name_zh, "value": f"{score:g}" if score is not None else None, "score": score})
                 if score is not None:
                     top = max(top, score)
-        scored = sorted((x for x in values if x.get("score") is not None), key=lambda x: -x["score"])
-        summary = "、".join([f"{x['label']} {x['value']}" for x in scored[:3]] + parts) or "已回報"
+                    ranked.append((score, f"{d.name_zh} {score:g}"))
+        # highest three (0–10 scores and option scores, as before); stable, so ties keep question order
+        ranked.sort(key=lambda x: -x[0])
+        summary = "、".join([text for _, text in ranked[:3]] + parts) or "已回報"
         detail = {"values": values, "notes": r.notes, "reviewed": r.review_status == "reviewed"}
         if ctx.staff:
             detail.update({"review_status": r.review_status, "reviewed_by": _person(r.reviewer), "reviewed_at": iso_utc(r.reviewed_at),
