@@ -47,7 +47,8 @@ function pngBytes(w, h, [r, g, b]) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
 }
 const fixture = (name, data) => { const f = path.join(FIX, name); fs.writeFileSync(f, data); return f }
-const IMG = Object.fromEntries([['a', [200, 60, 60]], ['b', [60, 60, 200]], ['c', [60, 200, 60]], ['d', [220, 200, 40]], ['e', [120, 40, 160]], ['f', [40, 160, 160]]]
+const IMG = Object.fromEntries([['a', [200, 60, 60]], ['b', [60, 60, 200]], ['c', [60, 200, 60]], ['d', [220, 200, 40]], ['e', [120, 40, 160]], ['f', [40, 160, 160]],
+  ['r1', [90, 30, 30]], ['r2', [30, 90, 30]], ['r3', [30, 30, 90]]]
   .map(([k, color]) => [k, fixture(`skin-${k}.png`, pngBytes(640, 480, color))]))
 const HEIC = fixture('IMG_0007.heic', Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypheic'), Buffer.alloc(4), Buffer.from('mif1heic'), Buffer.alloc(200)]))
 const BAD = fixture('broken.jpg', Buffer.from('this is not an image'.repeat(20)))
@@ -179,6 +180,80 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   check(`${mode} unreadable file → refused (無法讀取)`, await waitFn(p, () => document.querySelector('[data-photo-item=invalid] [data-photo-error]')?.innerText.includes('無法讀取')))
   await click(p, '[data-photo-item=invalid] [data-photo-remove]')
   await waitFn(p, () => !document.querySelector('[data-photo-item]'))
+
+  // ---------------------------------------------------------------- retry safety (API; frontend/src/utils/photoUploadRetry.js)
+  // Two real uploads at most here (the API allows 8 per patient per 10 minutes and the flow below needs 6).
+  if (mode === 'API') {
+    const posts = [] // Idempotency-Key of every upload POST the page sends
+    const fake = [] // answers for the next POSTs, instead of the API (the request never reaches it)
+    await p.setRequestInterception(true)
+    const onRequest = (r) => {
+      if (r.isInterceptResolutionHandled()) return
+      if (r.method() === 'POST' && r.url().endsWith('/symptom-photos')) {
+        posts.push(r.headers()['idempotency-key'])
+        const f = fake.shift()
+        if (f) return r.respond({ status: f.status, contentType: 'application/json', body: JSON.stringify({ error: { code: f.code, message: f.message, details: [] } }) })
+      }
+      r.continue()
+    }
+    p.on('request', onRequest)
+    const itemText = () => text(p, '[data-photo-item]')
+
+    // 400 / 403 from the API: the photo is refused, not "try again later"
+    for (const [status, code, message] of [[403, 'PHOTO_CONSENT_REQUIRED', '請先閱讀並同意照片使用說明'], [400, 'VALIDATION_ERROR', '請求內容有誤']]) {
+      fake.push({ status, code, message })
+      await choose(p, IMG.r1)
+      check(`${mode} retry safety: ${status} ${code} → 無法使用 with the reason, no 重試 (not treated as a temporary failure)`,
+        await waitSel(p, '[data-photo-item=invalid]') && (await itemText()).includes(message) && !(await p.$('[data-photo-item] [data-photo-retry]'))
+        && !!(await p.$('[data-photo-item] [data-photo-remove]')))
+      await click(p, '[data-photo-item] [data-photo-remove]')
+      await waitFn(p, () => !document.querySelector('[data-photo-item]'))
+    }
+
+    // 503 PHOTO_STORAGE_UNAVAILABLE (the API stored nothing) → the retry uses a NEW key and succeeds; a rapid
+    // double click on 重試 sends ONE request
+    posts.length = 0
+    fake.push({ status: 503, code: 'PHOTO_STORAGE_UNAVAILABLE', message: '照片暫時無法儲存，請稍後再試' })
+    await choose(p, IMG.r2)
+    check(`${mode} retry safety: 503 PHOTO_STORAGE_UNAVAILABLE → 上傳失敗 with the server's reason + 重試`,
+      await waitSel(p, '[data-photo-item=failed] [data-photo-retry]') && (await itemText()).includes('照片暫時無法儲存'))
+    await p.$eval('[data-photo-retry]', (b) => { b.click(); b.click(); b.click() }) // three clicks in the same moment
+    check(`${mode} retry safety: 503 → retry succeeds (已上傳)`, await waitSel(p, '[data-photo-item=uploaded]'))
+    await idle(p)
+    check(`${mode} retry safety: the retry after a 503 used a NEW Idempotency-Key`, posts.length >= 2 && posts[0] !== posts[1], JSON.stringify(posts))
+    check(`${mode} retry safety: three rapid clicks on 重試 → exactly one upload request`, posts.length === 2, `${posts.length} POSTs`)
+    await click(p, '[data-photo-item] [data-photo-remove]')
+    await waitFn(p, () => !document.querySelector('[data-photo-item]'))
+    p.off('request', onRequest)
+    await p.setRequestInterception(false)
+
+    // the answer is lost AFTER the API created the photo (response stage) → the result is unknown → the retry
+    // keeps the key → the API answers with the SAME photo: no duplicate
+    const cdp = await p.createCDPSession()
+    const seen = [] // { key, status, id } of each upload POST, as the API answered it
+    cdp.on('Fetch.requestPaused', async (ev) => {
+      if (ev.request.method !== 'POST') return cdp.send('Fetch.continueRequest', { requestId: ev.requestId }).catch(() => {})
+      const { body, base64Encoded } = await cdp.send('Fetch.getResponseBody', { requestId: ev.requestId })
+      const json = JSON.parse(base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body)
+      seen.push({ key: ev.request.headers['Idempotency-Key'] ?? ev.request.headers['idempotency-key'], status: ev.responseStatusCode, id: json?.data?.id })
+      if (seen.length === 1) return cdp.send('Fetch.failRequest', { requestId: ev.requestId, errorReason: 'TimedOut' }).catch(() => {})
+      cdp.send('Fetch.continueResponse', { requestId: ev.requestId }).catch(() => {})
+    })
+    await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*/symptom-photos', requestStage: 'Response' }] })
+    await choose(p, IMG.r3)
+    check(`${mode} retry safety: answer lost after the API created the photo → 上傳失敗, "無法確認" + 重試`,
+      await waitSel(p, '[data-photo-item=failed] [data-photo-retry]') && (await itemText()).includes('無法確認照片是否已上傳'), seen.map((s) => s.status).join(','))
+    await p.$eval('[data-photo-retry]', (b) => { b.click(); b.click() })
+    check(`${mode} retry safety: unknown result → retry → 已上傳`, await waitSel(p, '[data-photo-item=uploaded]'))
+    await idle(p)
+    check(`${mode} retry safety: the retry kept the Idempotency-Key and the API answered with the photo it had already created (no duplicate)`,
+      seen.length === 2 && seen[0].key && seen[0].key === seen[1].key && seen[0].status === 201 && seen[1].id === seen[0].id, JSON.stringify(seen))
+    await cdp.send('Fetch.disable')
+    await cdp.detach()
+    await click(p, '[data-photo-item] [data-photo-remove]')
+    await waitFn(p, () => !document.querySelector('[data-photo-item]'))
+    await idle(p)
+  }
 
   // ---------------------------------------------------------------- upload (API: first try fails on the network)
   const keys = []

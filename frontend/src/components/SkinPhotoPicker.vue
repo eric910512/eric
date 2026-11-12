@@ -3,11 +3,15 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 
 import { useSkinPhotoStore } from '@/stores/skinPhotos'
 import { ACCEPT, prepareImage } from '@/utils/imagePrep'
+import { classifyUploadFailure } from '@/utils/photoUploadRetry'
 
 /**
  * Photos of one skin self-assessment (optional, at most `max`): take or choose → preview → each photo is
  * prepared in the browser and uploaded on its own (pending until the report is sent, Idempotency-Key per
- * photo, kept for a retry) → status and reason per photo → retry / remove / choose again, body site.
+ * photo) → status and reason per photo → retry / remove / choose again, body site.
+ * Retry (utils/photoUploadRetry.js): an unknown result keeps the key (the API answers with the photo if it was
+ * created); a definite "nothing stored, try later" from the API gets a new key; a rejected photo is not retried.
+ * One upload per photo at a time: a second click while it is uploading does nothing.
  * The model is the list of items; the page sends `{ id, body_site }` of the uploaded ones with the report.
  */
 const props = defineProps({
@@ -55,7 +59,8 @@ async function onPick(event) {
 }
 
 async function upload(item) {
-  item.status = 'uploading'
+  if (item.status === 'uploading' || item.status === 'uploaded' || !item.prepared) return // double click, or nothing to send
+  item.status = 'uploading' // set before any await: a second click in the same moment stops above
   item.error = null
   item.key ??= newKey()
   try {
@@ -64,10 +69,10 @@ async function upload(item) {
     item.photoId = photo.id
     item.status = 'uploaded'
   } catch (err) {
-    item.status = 'failed'
-    item.error = err.code === 'NETWORK' ? '網路不穩定，照片還沒上傳。' : (err.message || '照片上傳失敗')
-    const retryable = !err.status || err.status >= 500 || err.code === 'IDEMPOTENCY_IN_PROGRESS'
-    if (!retryable) item.key = null // a rejected upload is a new request next time
+    const outcome = classifyUploadFailure(err)
+    item.status = outcome.retry ? 'failed' : 'invalid' // invalid: no 重試 — remove or choose again
+    item.error = outcome.message
+    if (outcome.newKey) item.key = null // that key can only repeat its answer; the unknown case keeps it
   }
 }
 
