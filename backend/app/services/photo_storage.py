@@ -1,22 +1,27 @@
 """Private photo storage (皮膚照片 Phase 1b; docs/skin-photo-storage-design.md, docs/skin-photo-deployment.md).
 
-The image bytes never go to the database or to a public folder. One interface, two backends:
+The image bytes never go to a public folder. One interface, three backends:
 
+- ``DatabasePhotoStorage`` (``database``): BYTEA rows in PostgreSQL (``symptom_photo_blobs``), written in the
+  same transaction as the photo row — the production choice (2026-11-12). Needs PHOTO_DB_QUOTA_BYTES; in
+  staging / production also a PostgreSQL database.
 - ``LocalPrivateStorage``: files under a private directory (default ``<instance>/private-photos``,
   git-ignored). **Development and tests only** — refused in staging / production, where Render's disk is
   temporary and shared with the app.
-- ``PrivateObjectStorage``: an S3-compatible private bucket with a customer-managed KMS key (candidate for
-  the hospital's production environment). The adapter is complete but nothing here creates a bucket or
-  credentials; it needs every PHOTO_OBJECT_* setting (and ``boto3``, a pinned dependency), otherwise photos stay off.
+- ``PrivateObjectStorage``: an S3-compatible private bucket with a customer-managed KMS key (kept as a future
+  option). Nothing here creates a bucket or credentials; it needs every PHOTO_OBJECT_* setting (and ``boto3``),
+  otherwise photos stay off. Production does not depend on it.
 
 ``photo_feature_status`` decides whether uploads / viewing are on. An unusable configuration disables
 the feature — it never falls back to another (less safe) backend.
 """
 
+import hashlib
 import importlib.util
 import os
 import re
 import tempfile
+import time
 from dataclasses import dataclass
 
 from app.config import PRODUCTION_LIKE, Config
@@ -48,13 +53,21 @@ def _safe_reason(exc):
     return code if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9.]{1,64}", code) else type(exc).__name__
 
 
+class PhotoStorageFull(PhotoStorageError):
+    """The photo quota would be exceeded (database storage): the upload is refused, nothing is stored."""
+
+
 class PhotoStorageService:
     name = None
+    transactional = False  # True: writes / deletes are part of the caller's database transaction
 
     @staticmethod
     def check_key(key):
         if not isinstance(key, str) or not KEY_PATTERN.match(key):
             raise ValueError("invalid photo storage key")
+
+    def reserve(self, nbytes):
+        """Called before an upload stores ``nbytes`` (inside its transaction); raises PhotoStorageFull. No quota here."""
 
     def put(self, key, data, content_type):
         raise NotImplementedError
@@ -234,6 +247,159 @@ class PrivateObjectStorage(PhotoStorageService):
             raise PhotoStorageError("object storage check failed", _safe_reason(exc)) from exc
 
 
+class DatabasePhotoStorage(PhotoStorageService):
+    """Image bytes in PostgreSQL: ``symptom_photo_blobs`` (BYTEA), one row per variant, referencing the photo.
+
+    - Transactional: ``put`` / ``delete`` only add to the caller's session. An upload commits the photo row,
+      both images and its Idempotency-Key together — or nothing; a removal deletes the images in the
+      transaction that discards the photo. No compensation, no orphan image.
+    - Quota (PHOTO_DB_QUOTA_BYTES, the sum of stored image bytes): ``reserve`` takes a transaction-level
+      advisory lock first (PostgreSQL), so concurrent uploads check and insert one after the other and cannot
+      pass the check together; the lock is released at commit / rollback.
+    - Reads select one row by its unique storage key; nothing else reads the ``data`` column.
+    """
+
+    name = "database"
+    transactional = True
+    QUOTA_LOCK = 0x50484F54  # pg_advisory_xact_lock key of the photo quota ("PHOT")
+    WARN_EVERY_SECONDS = 3600
+
+    def __init__(self, quota_bytes, warn_percent, critical_percent, disk_bytes=None):
+        self.quota_bytes, self.warn_percent, self.critical_percent = quota_bytes, warn_percent, critical_percent
+        self.disk_bytes = disk_bytes
+        self._last_warning = 0.0
+
+    @staticmethod
+    def invalid_settings(config):
+        def get(name):
+            return config.get(name, getattr(Config, name))
+        quota, warn, critical, disk = (get(n) for n in ("PHOTO_DB_QUOTA_BYTES", "PHOTO_DB_WARN_PERCENT",
+                                                         "PHOTO_DB_CRITICAL_PERCENT", "PHOTO_DB_DISK_BYTES"))
+        problems = []
+        if not isinstance(quota, int) or isinstance(quota, bool) or quota <= 0:
+            problems.append("PHOTO_DB_QUOTA_BYTES")
+        if not all(isinstance(p, int) and not isinstance(p, bool) for p in (warn, critical)) or not 0 < warn < critical <= 100:
+            problems.append("PHOTO_DB_WARN_PERCENT / PHOTO_DB_CRITICAL_PERCENT")
+        if disk is not None and (not isinstance(disk, int) or isinstance(disk, bool) or disk <= 0):
+            problems.append("PHOTO_DB_DISK_BYTES")
+        return problems
+
+    # -- the session / model are imported lazily: this module is imported by the app factory
+    @staticmethod
+    def _db():
+        from app.extensions import db  # noqa: PLC0415
+        from app.models import SymptomPhoto, SymptomPhotoBlob  # noqa: PLC0415
+
+        return db, SymptomPhoto, SymptomPhotoBlob
+
+    def _run(self, operation, fn):
+        from sqlalchemy.exc import SQLAlchemyError  # noqa: PLC0415
+
+        try:
+            return fn()
+        except PhotoStorageError:
+            raise
+        except SQLAlchemyError as exc:
+            raise PhotoStorageError(f"database storage {operation} failed", type(exc).__name__) from exc
+
+    def used_bytes(self):
+        from sqlalchemy import func, select  # noqa: PLC0415
+
+        db, _photo, Blob = self._db()
+        return self._run("usage", lambda: int(db.session.execute(select(func.coalesce(func.sum(Blob.byte_size), 0))).scalar()))
+
+    def level(self, used):
+        percent = 100.0 * used / self.quota_bytes
+        return "critical" if percent >= self.critical_percent else "warning" if percent >= self.warn_percent else "ok"
+
+    def reserve(self, nbytes):
+        from flask import current_app  # noqa: PLC0415
+        from sqlalchemy import text  # noqa: PLC0415
+
+        db, _photo, _blob = self._db()
+
+        def check():
+            if db.session.get_bind().dialect.name == "postgresql":
+                db.session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": self.QUOTA_LOCK})
+            return self.used_bytes()
+        used = self._run("quota check", check)
+        if used + nbytes > self.quota_bytes:
+            current_app.logger.warning("photo storage full: %d of %d bytes used; upload refused", used, self.quota_bytes)
+            raise PhotoStorageFull("photo quota exceeded", "QuotaExceeded")
+        after = used + nbytes
+        if self.level(after) != "ok" and time.monotonic() - self._last_warning > self.WARN_EVERY_SECONDS:
+            self._last_warning = time.monotonic()
+            current_app.logger.warning("photo storage at %.0f%% of quota (%d of %d bytes, %s); see `flask photos storage-report`",
+                                       100.0 * after / self.quota_bytes, after, self.quota_bytes, self.level(after))
+
+    def put(self, key, data, content_type):
+        self.check_key(key)
+        from sqlalchemy import or_, select  # noqa: PLC0415
+
+        db, Photo, Blob = self._db()
+
+        def insert():
+            photo_id = db.session.execute(select(Photo.id).where(
+                or_(Photo.storage_key == key, Photo.thumb_storage_key == key))).scalar_one_or_none()
+            if photo_id is None:  # the photo row must be flushed first (same transaction)
+                raise PhotoStorageError("database storage write failed", "PhotoRowMissing")
+            db.session.add(Blob(photo_id=photo_id, variant="thumb" if key.endswith("/thumb.jpg") else "full", storage_key=key,
+                                content_type=content_type, byte_size=len(data), sha256=hashlib.sha256(data).hexdigest(), data=data))
+            db.session.flush()
+        self._run("write", insert)
+
+    def get(self, key):
+        self.check_key(key)
+        from sqlalchemy import select  # noqa: PLC0415
+
+        db, _photo, Blob = self._db()
+        data = self._run("read", lambda: db.session.execute(select(Blob.data).where(Blob.storage_key == key)).scalar_one_or_none())
+        return None if data is None else bytes(data)
+
+    def delete(self, key):
+        """Part of the caller's transaction (no commit here). Deleting a missing image is not an error."""
+        self.check_key(key)
+        from sqlalchemy import delete  # noqa: PLC0415
+
+        db, _photo, Blob = self._db()
+        self._run("delete", lambda: db.session.execute(delete(Blob).where(Blob.storage_key == key)))
+
+    def exists(self, key):
+        self.check_key(key)
+        from sqlalchemy import select  # noqa: PLC0415
+
+        db, _photo, Blob = self._db()
+        return self._run("check", lambda: db.session.execute(select(Blob.id).where(Blob.storage_key == key)).first() is not None)
+
+    def keys(self):
+        """Every stored key (`flask photos verify`: images without a photo row cannot exist — foreign key)."""
+        from sqlalchemy import select  # noqa: PLC0415
+
+        db, _photo, Blob = self._db()
+        return self._run("list", lambda: sorted(db.session.execute(select(Blob.storage_key)).scalars()))
+
+    def usage_report(self):
+        """Counts and sizes only — never an image, key, photo id or patient (`flask photos storage-report`)."""
+        from sqlalchemy import func, select, text  # noqa: PLC0415
+
+        db, _photo, Blob = self._db()
+
+        def collect():
+            rows = db.session.execute(select(Blob.variant, func.count(), func.coalesce(func.sum(Blob.byte_size), 0))
+                                      .group_by(Blob.variant)).all()
+            by_variant = {v: {"images": n, "bytes": int(b)} for v, n, b in rows}
+            used = sum(v["bytes"] for v in by_variant.values())
+            postgres = db.session.get_bind().dialect.name == "postgresql"
+            table = int(db.session.execute(text("SELECT pg_total_relation_size('symptom_photo_blobs')")).scalar()) if postgres else None
+            database = int(db.session.execute(text("SELECT pg_database_size(current_database())")).scalar()) if postgres else None
+            return {"by_variant": by_variant, "photo_bytes": used, "table_bytes": table, "database_bytes": database,
+                    "quota_bytes": self.quota_bytes, "quota_percent": round(100.0 * used / self.quota_bytes, 1),
+                    "disk_bytes": self.disk_bytes,
+                    "disk_percent": round(100.0 * database / self.disk_bytes, 1) if database is not None and self.disk_bytes else None,
+                    "level": self.level(used)}
+        return self._run("report", collect)
+
+
 # ------------------------------------------------------------------ feature switch
 
 
@@ -248,6 +414,15 @@ class PhotoFeature:
 def _build_storage(app):
     config_name = app.config.get("CONFIG_NAME")
     backend = (app.config.get("PHOTO_STORAGE_BACKEND") or "").strip().lower()
+    if backend == "database":
+        if DatabasePhotoStorage.invalid_settings(app.config):
+            return None, "photo_quota_not_configured"
+        if config_name in PRODUCTION_LIKE and not str(app.config.get("SQLALCHEMY_DATABASE_URI", "")).startswith("postgresql"):
+            return None, "database_storage_requires_postgresql"
+        cfg = app.config
+        return DatabasePhotoStorage(cfg["PHOTO_DB_QUOTA_BYTES"], cfg.get("PHOTO_DB_WARN_PERCENT", Config.PHOTO_DB_WARN_PERCENT),
+                                    cfg.get("PHOTO_DB_CRITICAL_PERCENT", Config.PHOTO_DB_CRITICAL_PERCENT),
+                                    cfg.get("PHOTO_DB_DISK_BYTES")), None
     if backend == "local":
         if config_name in PRODUCTION_LIKE:
             return None, "local_storage_not_allowed"

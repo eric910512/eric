@@ -133,8 +133,9 @@ class Config:
     # (PHOTO_CONSENT_APPROVED_VERSION = the version in app/modules/photo/consent.py). Never falls back
     # to another backend: an unusable configuration disables uploads.
     PHOTO_UPLOADS_ENABLED = _flag("PHOTO_UPLOADS_ENABLED", False)
+    # "database" = DatabasePhotoStorage (BYTEA in PostgreSQL; needs PHOTO_DB_QUOTA_BYTES) — the production choice;
     # "local" = LocalPrivateStorage (development / tests only, refused in staging / production);
-    # "object" = PrivateObjectStorage (S3-compatible private bucket; needs the PHOTO_OBJECT_* settings)
+    # "object" = PrivateObjectStorage (S3-compatible private bucket; needs the PHOTO_OBJECT_* settings; future option)
     PHOTO_STORAGE_BACKEND = os.environ.get("PHOTO_STORAGE_BACKEND", "").strip().lower()
     PHOTO_LOCAL_DIR = os.environ.get("PHOTO_LOCAL_DIR")  # default: <instance>/private-photos (git-ignored)
     PHOTO_OBJECT_BUCKET = os.environ.get("PHOTO_OBJECT_BUCKET")
@@ -150,6 +151,13 @@ class Config:
     PHOTO_OBJECT_CONNECT_TIMEOUT = _number("PHOTO_OBJECT_CONNECT_TIMEOUT", 3.0, float)  # seconds
     PHOTO_OBJECT_READ_TIMEOUT = _number("PHOTO_OBJECT_READ_TIMEOUT", 5.0, float)  # seconds without data from S3
     PHOTO_OBJECT_MAX_ATTEMPTS = _number("PHOTO_OBJECT_MAX_ATTEMPTS", 2, int)  # including the first; 1 = no retry
+    # Database photo storage ("database" = DatabasePhotoStorage, images as BYTEA in symptom_photo_blobs). The quota
+    # is the sum of stored image bytes, set per environment (no default: photos stay off without it — e.g.
+    # 209715200 = 200 MiB for the first test deployment). Warnings in the log from WARN / CRITICAL percent.
+    PHOTO_DB_QUOTA_BYTES = _number("PHOTO_DB_QUOTA_BYTES", None, int)
+    PHOTO_DB_WARN_PERCENT = _number("PHOTO_DB_WARN_PERCENT", 70, int)
+    PHOTO_DB_CRITICAL_PERCENT = _number("PHOTO_DB_CRITICAL_PERCENT", 85, int)
+    PHOTO_DB_DISK_BYTES = _number("PHOTO_DB_DISK_BYTES", None, int)  # optional: the database disk size, for the report
     PHOTO_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
     PHOTO_MAX_PIXELS = 40_000_000  # checked before decoding (decompression bombs)
     PHOTO_MIN_SIDE = 64

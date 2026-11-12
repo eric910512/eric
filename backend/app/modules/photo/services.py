@@ -31,7 +31,7 @@ from app.models.enums import (AuditAction, AuditCategory, AuditOutcome, PhotoDel
                               RoleName, SymptomValueType)
 from app.modules.photo import consent as consent_text
 from app.services.image_processing import ALLOWED_TYPES, STORED_TYPE, ImageRejected, process
-from app.services.photo_storage import PhotoStorageError, photo_feature
+from app.services.photo_storage import PhotoStorageError, PhotoStorageFull, photo_feature
 
 PHOTO_FORMS = ("rt_skin_self_assessment",)  # forms whose reports may carry photos
 TZ = "Asia/Taipei"
@@ -212,8 +212,9 @@ def prepare_upload(data, declared_type):
 
 
 def create_pending_photo(patient, user, image, stored_keys):
-    """Store the re-encoded image and add a pending row (caller commits). ``stored_keys`` collects the keys
-    written, so the caller can remove them if the commit fails. Returns (photo, created)."""
+    """Add a pending row and store the re-encoded image (caller commits). ``stored_keys`` collects the keys
+    written, so the caller can remove them if the commit fails (database storage: nothing to remove — the
+    images are part of the same transaction). Returns (photo, created)."""
     duplicate = db.session.execute(select(SymptomPhoto).where(
         SymptomPhoto.uploaded_by == user.id, SymptomPhoto.patient_id == patient.id,
         SymptomPhoto.status == PhotoStatus.PENDING, SymptomPhoto.source_sha256 == image.source_sha256)).scalar_one_or_none()
@@ -228,6 +229,15 @@ def create_pending_photo(patient, user, image, stored_keys):
     folder = generate_uuid().replace("-", "")  # unrelated to the public id: the key reveals nothing
     photo.storage_key, photo.thumb_storage_key = f"photos/{folder}/full.jpg", f"photos/{folder}/thumb.jpg"
     try:
+        storage.reserve(len(image.full) + len(image.thumb))  # quota (database storage: serialized, this transaction)
+    except PhotoStorageFull:
+        raise APIError(507, "PHOTO_STORAGE_FULL", "照片儲存空間已滿，目前無法上傳照片；文字回報仍可送出") from None
+    except PhotoStorageError as exc:
+        current_app.logger.warning("photo storage quota check failed (%s)", exc.reason)
+        raise APIError(503, "PHOTO_STORAGE_UNAVAILABLE", "照片暫時無法儲存，請稍後再試") from None
+    db.session.add(photo)
+    db.session.flush()  # the row first: database storage references it (same transaction)
+    try:
         storage.put(photo.storage_key, image.full, STORED_TYPE)
         stored_keys.append(photo.storage_key)
         storage.put(photo.thumb_storage_key, image.thumb, STORED_TYPE)
@@ -235,8 +245,6 @@ def create_pending_photo(patient, user, image, stored_keys):
     except PhotoStorageError as exc:
         current_app.logger.warning("photo storage write failed (%s)", exc.reason)  # a code only: no bucket / key / patient
         raise APIError(503, "PHOTO_STORAGE_UNAVAILABLE", "照片暫時無法儲存，請稍後再試") from None
-    db.session.add(photo)
-    db.session.flush()
     record_data_event(AuditAction.CREATE, "symptom_photos", photo.public_id, patient=patient,
                       changes={"status": PhotoStatus.PENDING, "file_size": photo.file_size, "width": photo.width, "height": photo.height})
     return photo, True
@@ -256,6 +264,8 @@ def remove_stored(keys):
             current_app.logger.warning("photo storage delete failed (%s); remaining removals skipped — "
                                        "`flask photos verify --fix` removes leftovers", exc.reason)
             break
+    if storage.transactional:
+        db.session.commit()  # database storage: the deletes are part of the session (callers have committed their work)
 
 
 def photo_keys(photo):
@@ -264,8 +274,9 @@ def photo_keys(photo):
 
 def _mark_discarded(photo, reason, actor_id):
     """pending → discarded, **only if it is still pending** (conditional update): a report attaching the same
-    photo at the same moment either wins (the photo stays attached, nothing is deleted) or loses. The files
-    are removed by the caller only after this state change is committed — never before."""
+    photo at the same moment either wins (the photo stays attached, nothing is deleted) or loses. Files are
+    removed by the caller only after this state change is committed — never before; database storage instead
+    deletes the images in this same transaction (``_delete_in_transaction``)."""
     now = utcnow()
     result = db.session.execute(
         update(SymptomPhoto).where(SymptomPhoto.id == photo.id, SymptomPhoto.status == PhotoStatus.PENDING)
@@ -275,10 +286,24 @@ def _mark_discarded(photo, reason, actor_id):
     return result.rowcount == 1
 
 
+def _delete_in_transaction(photo):
+    """Database storage: delete the images in the transaction that discards the photo (all or nothing)."""
+    storage = feature().storage
+    for key in photo_keys(photo):
+        storage.delete(key)
+
+
 def discard_pending(photo, user):
-    """Patient removes an unsent photo (caller commits, then deletes ``photo_keys(photo)``)."""
+    """Patient removes an unsent photo (caller commits, then deletes ``photo_keys(photo)``; database storage:
+    the images are deleted here, in the same transaction — a failure keeps the photo pending with its images)."""
     if photo.status != PhotoStatus.PENDING or not _mark_discarded(photo, PhotoDeleteReason.REMOVED_BEFORE_SUBMIT, user.id):
         raise APIError(409, "PHOTO_RETAINED", "已送出的照片屬於照護紀錄，依規定保留；如需處理請聯絡醫療團隊")
+    if feature().storage.transactional:
+        try:
+            _delete_in_transaction(photo)
+        except PhotoStorageError as exc:
+            current_app.logger.warning("photo storage delete failed (%s); the photo stays pending", exc.reason)
+            raise APIError(503, "PHOTO_STORAGE_UNAVAILABLE", "照片暫時無法移除，請稍後再試") from None
     record_data_event(AuditAction.DELETE, "symptom_photos", photo.public_id, patient=photo.patient,
                       changes={"reason": PhotoDeleteReason.REMOVED_BEFORE_SUBMIT})
 
@@ -293,9 +318,17 @@ def purge_expired_pending(limit=50, now=None):
         SymptomPhoto.status == PhotoStatus.PENDING, SymptomPhoto.created_at < cutoff,
     ).order_by(SymptomPhoto.created_at).limit(limit)).scalars().all()
     discarded = []
+    transactional = feature().storage.transactional
     for photo in rows:
         if not _mark_discarded(photo, PhotoDeleteReason.EXPIRED_UNATTACHED, None):
             continue  # attached (or removed) in the meantime: leave it alone
+        if transactional:
+            try:
+                _delete_in_transaction(photo)  # database storage: rows and images together
+            except PhotoStorageError as exc:
+                db.session.rollback()  # nothing half done: the photos stay pending, the next clean-up retries
+                current_app.logger.warning("photo clean-up failed (%s); retried next time", exc.reason)
+                return 0
         discarded.append(photo)
         db.session.add(AuditLog(  # system action: no user, no request
             actor_identifier="system:photo-cleanup", category=AuditCategory.DATA, action=AuditAction.DELETE,
@@ -304,7 +337,8 @@ def purge_expired_pending(limit=50, now=None):
         ))
     if discarded:
         db.session.commit()
-        remove_stored([key for photo in discarded for key in photo_keys(photo)])  # one call: stops at the first failure
+        if not transactional:
+            remove_stored([key for photo in discarded for key in photo_keys(photo)])  # one call: stops at the first failure
     return len(discarded)
 
 
@@ -314,10 +348,8 @@ def verify_storage(fix=False):
     - ``missing``: a pending / attached photo whose file is gone — reported, **never fixed automatically**
       (a care record is affected; someone has to look).
     - ``leftovers``: files of discarded photos still stored (e.g. a removal that failed) — removed with ``fix``.
-    - ``orphans`` (local storage only, it can be listed): files without any row — removed with ``fix``.
+    - ``orphans`` (local and database storage — they can be listed): files without any row — removed with ``fix``.
     """
-    from app.services.photo_storage import LocalPrivateStorage
-
     storage = feature().storage
     rows = db.session.execute(select(SymptomPhoto).order_by(SymptomPhoto.id)).scalars().all()
     missing, leftovers = [], []
@@ -329,7 +361,7 @@ def verify_storage(fix=False):
             elif p.status == PhotoStatus.DISCARDED and present:
                 leftovers.append(key)
     orphans = []
-    if isinstance(storage, LocalPrivateStorage):
+    if hasattr(storage, "keys"):
         known = {k for p in rows for k in photo_keys(p)}
         orphans = [k for k in storage.keys() if k not in known]
     if fix:
