@@ -68,6 +68,8 @@ def fingerprint(tables, where=None):
     out = {}
     for t in tables:
         rows = db.session.execute(text(f"SELECT * FROM {t} {where.get(t, '') if where else ''} ORDER BY id")).all()
+        # BYTEA comes back as memoryview, whose repr is a memory address (different in every process): hash the bytes
+        rows = [tuple(bytes(v) if isinstance(v, memoryview) else v for v in r) for r in rows]
         out[t] = [len(rows), hashlib.sha256(repr(rows).encode()).hexdigest()[:16]]
     return out
 
@@ -139,7 +141,8 @@ with app.app_context(), warnings.catch_warnings():
                                                                    "next_follow_up": {"due_at": nxt, "reason": "一週後再確認"}}, headers=H(n1))
         check("full: skin report, review + follow-up, completion + next follow-up", r.status_code == 200 and r.get_json()["data"]["next_follow_up"]["status"] == "open")
         snap = {**fingerprint(NEW_FEATURE), **fingerprint(("symptom_records", "symptom_record_values"), SKIN_ROWS)}
-        check("full: new-feature rows written", snap["care_follow_ups"][0] == 2 and snap["care_follow_up_events"][0] == 3 and snap["patient_consents"][0] == 1, snap)
+        check("full: new-feature rows written", snap["care_follow_ups"][0] == 2 and snap["care_follow_up_events"][0] == 3
+              and snap["patient_consents"][0] >= 1, snap)  # ≥ 1: a rehearsal's photo phases add consents of other patients
         json.dump(snap, open(os.environ["SNAP"], "w"))
 
     elif MODE == "bridge-serve":

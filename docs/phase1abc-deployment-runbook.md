@@ -95,3 +95,66 @@
 - 跳過 Phase 4；Phase 5 直接部署 `<FULL>`，log 應出現四個 `Running upgrade`。
 - 回復選項只剩 forward fix、資料庫 downgrade（資料遺失）或還原；**不可**回到 `71e9d8e`。
 - 部署與觀察期間建議 API 暫時使用不休眠的方案，降低舊實例重啟造成中斷的機率。
+
+## 附錄：沿用已付費 `cancer-care-db` 的上線計畫（2026-11-12 決定，不另建測試資料庫）
+
+### A. 本機演練（已完成：PostgreSQL 16.2 與 17.11）
+- `python backend/tests/predeploy/rehearsal_pg.py`（預設 `71e9d8e` → `feature/phase1abc-schema-bridge` → `feature/skin-follow-up`）。用臨時 PostgreSQL 與合成資料，每一步都在獨立程序執行。
+- 涵蓋：
+  - 舊版建立模擬正式資料 → 橋接版升級 → 完整版（照片開啟）→ 回退橋接版 → 再回完整版；
+  - 舊版拒絕已升級的資料庫；
+  - 模擬 Render 匯出（`.dir.tar.gz`）並還原到新資料庫；
+  - 第 4 個 migration 失敗。
+- 結果：PostgreSQL 16.2 → 60/60；**PostgreSQL 17.11（與 Render 同一主版本）→ 60/60**（2026-11-12）。`photo_db_storage_check.py` 在 17.11 為 43/43（BYTEA／`STORAGE EXTERNAL`、移除與清理、並行配額含對照組、200 MiB → 507、`pg_dump`／`pg_restore`、降級保護）。
+- PostgreSQL 17 執行方式：`PG_BIN=<pg17>/bin python backend/tests/predeploy/rehearsal_pg.py`（`photo_db_storage_check.py` 同樣支援 `PG_BIN`）。本次使用 EnterpriseDB 官方 `postgresql-17.11-5-windows-x64-binaries.zip`：SHA-256 `80379b2c…8f82f`；檔案沒有 Windows 程式碼簽章；只解出 `bin`／`lib`／`share`，沒有安裝 Windows 服務，也沒有建立永久資料庫。
+
+### B. `cancer-care-db` 容量查核（唯讀，在 Dashboard 由有權限者操作；未確認前不開照片）
+1. `cancer-care-db` → **Info**：記錄 Storage 配置大小（1 GB 或 5 GB 的倍數）與是否開啟 storage autoscaling。
+2. **Metrics** → Disk usage：記錄目前用量與最近 30 天的成長。
+3. Phase 2 的匯出檔大小可當作資料量的下限參考。
+4. 判斷：**目前用量 + 配額 × 1.1（實測資料表額外約 4%，再留 WAL 空間）≤ 配置大小的 50%** 才可使用該配額。
+   - 例：1 GB、目前用量 < 約 290 MiB → 200 MiB 可行。
+   - 不符合時降低配額（例如 50～100 MiB），或維持關閉。增加儲存空間會增加月費（$0.30/GB，只能增加不能減少），不在目前方案內。
+5. 原因：磁碟用滿時 Render 會把資料庫標為 unhealthy 並暫停，聊天室與回報也會一起停擺。
+6. 監控：正式 API 是 Free 方案，沒有 Shell，無法執行 `flask photos storage-report`。上線後以 Dashboard 的 Metrics（disk usage）與 API log 的 `photo storage at …%` 警示為主。
+
+### C. 經驗證的備份與還原（正式部署前必須完成；不對真實資料做任何破壞性操作）
+1. `cancer-care-db` → **Recovery**：
+   - 記錄 PITR 可回復的時間窗（Hobby 為 3 天）；
+   - **Create export**：pg_dump 目錄格式 `.dir.tar.gz`，保留 7 天。
+2. 下載匯出檔：含真實病人資料，須依院方規定授權、加密保存、用畢刪除。在隔離的本機 PostgreSQL 17 解壓後，用 `pg_restore` 還原到**新的空白資料庫**（流程與 A 演練相同）。
+3. 只做唯讀檢查：`alembic_version` = `b5cd01c11e1d`、各表筆數、50 組教學帳號存在。可選：在還原副本上跑橋接版升級（副本會在用畢後刪除）。
+4. 若不允許下載：改用 PITR 還原到**新**的 Render 資料庫做驗證（存在期間按秒計費），驗證後刪除。不得覆蓋原資料庫。
+
+### D. 正式部署步驟（每一步都需另行授權；API 啟動時自動執行 migration：`render_start.sh` 為 `set -euo pipefail` → `flask db upgrade` → gunicorn）
+0. 前置：
+   - B、C 完成；
+   - Auto-Deploy = Off、`SEED_DEMO_DATA=false`；
+   - 確認 Render Live Commit = `71e9d8e`；
+   - 安排維護時段並通知使用者。
+1. **橋接版**：
+   - main fast-forward 到 `9c2f522`（只多 4 個 migration 檔）→ push → **只**手動部署 `cancer-care-api`。
+   - log 應依序出現 4 行 `Running upgrade`，從 `b5cd01c11e1d` 到 `b8c3f1d7e2a6`；health 200；聊天室與每日回報冒煙通過。
+   - 失敗時：交易回滾、資料庫維持 `b5cd01c11e1d`（演練已驗證），新實例不啟動，舊實例繼續服務（INFERRED，Render 行為）。
+2. 觀察一段時間。
+3. **完整版**：
+   - main 合併 `feature/skin-follow-up`（merge-tree 無衝突）→ push → 部署 `cancer-care-api`：log 不應有 `Running upgrade`。
+   - 照片 API settings 應回 `upload_enabled: false`（`disabled_by_config`）。
+   - 再部署 `cancer-care-web`。
+4. **照片啟用**（之後另一個獨立步驟），條件：
+   - 容量查核通過；
+   - 院方核可同意書（目前程式中的版本 `skin-photo-2026-11-draft-1` 是草稿：需先把核可文字寫進 `consent.py` 並另發版本）；
+   - 權限冒煙通過。
+
+   然後設定 `PHOTO_STORAGE_BACKEND=database`、`PHOTO_DB_QUOTA_BYTES=<查核後的值>`、`PHOTO_CONSENT_APPROVED_VERSION=<核可版本>`、`PHOTO_UPLOADS_ENABLED=true` 並重新啟動；以教學帳號與合成圖片冒煙測試。
+
+### E. 回退方案
+| 情況 | 處置 |
+|---|---|
+| 橋接版 migration 失敗 | 不需處理資料庫（已回滾）；必要時重新部署 `71e9d8e` |
+| 完整版有問題 | 重新部署橋接版 `9c2f522`：演練已驗證可啟動，所有新功能資料（含照片圖片）保持不變 |
+| 照片功能有問題 | `PHOTO_UPLOADS_ENABLED=false` 並重新啟動：停止上傳，已存照片仍可讀；需要完全隱藏時再移除 `PHOTO_STORAGE_BACKEND` |
+| 照片接近配額或磁碟偏高 | 停止上傳（同上），評估配額與保存政策 |
+| 資料毀損或誤刪 | PITR 還原到**新**資料庫（3 天內）→ 驗證 → 改指 `DATABASE_URL`；還原時間點之後的資料會遺失 |
+| 磁碟已滿（資料庫被暫停）| resume → 增加儲存空間（產生費用）→ 停止照片上傳 |
+| **絕對不要** | 在已升級的資料庫上部署 `71e9d8e`；在有資料時執行 migration 降級；`SEED_DEMO_DATA=true`；套用 Blueprint |

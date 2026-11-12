@@ -1,14 +1,16 @@
 """皮膚照片 database storage on a REAL, throw-away PostgreSQL — never a deployed database.
 
     python tests/predeploy/photo_db_storage_check.py            # from backend/
+    PG_BIN=<PostgreSQL bin directory> python …                  # another install, e.g. 17 like Render
 
-Starts its own PostgreSQL server (the `pgserver` package's binaries — a local test tool, not in any
+Starts its own PostgreSQL server (default: the `pgserver` package's binaries — a local test tool, not in any
 requirements file: `pip install pgserver==0.1.4`) in a temporary directory on 127.0.0.1, runs every phase in
 its own process with the staging configuration and photos ON (PHOTO_STORAGE_BACKEND=database,
 PHOTO_DB_QUOTA_BYTES=209715200 = 200 MiB from the environment), synthetic accounts and generated images only:
 
   1. migration to b8c3f1d7e2a6: BYTEA column, STORAGE EXTERNAL, constraints, foreign key RESTRICT
-  2. upload in one process → read back in a NEW process (redeploy), access isolation
+  2. upload in one process → read back in a NEW process (redeploy), access isolation; removal before submit and
+     the expired clean-up delete the images in the same transaction, an attached photo is kept (409)
   3. list / history / record queries never touch symptom_photo_blobs (SQL capture on PostgreSQL)
   4. concurrent uploads against the quota: with the advisory lock no overshoot; without it (control run)
      the same race overshoots — so the test can see the problem it guards against
@@ -17,8 +19,8 @@ PHOTO_DB_QUOTA_BYTES=209715200 = 200 MiB from the environment), synthetic accoun
   6. pg_dump -Fc → pg_restore into a new database → images readable and identical in a new process
   7. downgrade guard: refused while images exist; an empty table downgrades and upgrades again
 
-PostgreSQL here is 16 (pgserver); Render runs 17 — nothing used here differs between them (BYTEA, TOAST
-storage, advisory locks, pg_dump custom format), but the restore was not run on 17.
+Default PostgreSQL here is 16 (pgserver); Render runs 17. Both pass (16.2 and, with PG_BIN, 17.11 — 2026-11-12;
+tests/predeploy/rehearsal_pg.py likewise).
 """
 import hashlib
 import io
@@ -35,7 +37,7 @@ import time
 import uuid
 from pathlib import Path
 
-BACKEND = Path(__file__).resolve().parents[2]
+BACKEND = Path(os.environ.get("BACKEND") or Path(__file__).resolve().parents[2])  # the release under test (phases)
 PHASE = os.environ.get("PHOTO_CHECK_PHASE")
 STATE = os.environ.get("PHOTO_CHECK_STATE")
 PASSWORD = "Predeploy123"  # synthetic accounts only
@@ -181,6 +183,29 @@ def child():
             db.session.remove()
         check("…2 photos × 2 images in symptom_photo_blobs", q("SELECT count(*) FROM symptom_photo_blobs") == 4)
         save()
+
+    elif PHASE == "delete":  # removal and clean-up on PostgreSQL: status change + image delete in one transaction
+        pt = token("patient01@demo.local")
+        n_blobs = lambda public_id: q("SELECT count(*) FROM symptom_photo_blobs b JOIN symptom_photos p ON p.id = b.photo_id "  # noqa: E731
+                                      "WHERE p.public_id = :p", p=public_id)
+        r = c.delete(f"/api/v1/symptom-photos/{state['B']}", headers=H(pt))
+        check("patient removes the pending photo → 200: discarded, both image rows gone",
+              r.status_code == 200 and q("SELECT status FROM symptom_photos WHERE public_id = :p", p=state["B"]) == "discarded"
+              and n_blobs(state["B"]) == 0)
+        r = c.delete(f"/api/v1/symptom-photos/{state['A']}", headers=H(pt))
+        check("an attached photo cannot be removed → 409 PHOTO_RETAINED, its images kept", r.status_code == 409 and n_blobs(state["A"]) == 2)
+        _r, d = upload(pt)
+        with app.app_context():
+            p = db.session.query(SymptomPhoto).filter_by(public_id=d["id"]).one()
+            p.created_at = utcnow() - __import__("datetime").timedelta(hours=25)
+            db.session.commit()
+            purged = photo_services.purge_expired_pending()
+            db.session.remove()
+        check("expired pending photo → clean-up discards it and deletes its images in the same commit",
+              purged >= 1 and q("SELECT delete_reason FROM symptom_photos WHERE public_id = :p", p=d["id"]) == "expired_unattached"
+              and n_blobs(d["id"]) == 0)
+        check("no image row without a pending / attached photo", q(
+            "SELECT count(*) FROM symptom_photo_blobs b JOIN symptom_photos p ON p.id = b.photo_id WHERE p.status = 'discarded'") == 0)
 
     elif PHASE == "restart":
         pt, nt = token("patient01@demo.local"), token("nurse01@demo.local")
@@ -330,18 +355,25 @@ def free_port():
 
 
 def main():
-    from pgserver import _commands  # local test tool
-
-    pgbin = Path(_commands.POSTGRES_BIN_PATH)
+    if os.environ.get("PG_BIN"):  # another PostgreSQL install, e.g. 17 like Render
+        pgbin = Path(os.environ["PG_BIN"])
+    else:
+        from pgserver import _commands  # local test tool (PostgreSQL 16)
+        pgbin = Path(_commands.POSTGRES_BIN_PATH)
     exe = lambda name: str(pgbin / (name + (".exe" if os.name == "nt" else "")))  # noqa: E731
     tmp = Path(tempfile.mkdtemp(prefix="photo-db-check-"))
     port = free_port()
     print(f"===== database photo storage on a throw-away PostgreSQL ({subprocess.run([exe('postgres'), '--version'], capture_output=True, text=True).stdout.strip()}, 127.0.0.1:{port})")
     quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    subprocess.run([exe("initdb"), "-D", str(tmp / "data"), "-U", "postgres", "-A", "trust", "-E", "UTF8"], check=True, **quiet)
-    # not captured: the server started by pg_ctl inherits the handles, a capture would wait for it forever
-    subprocess.run([exe("pg_ctl"), "-D", str(tmp / "data"), "-o", f"-p {port} -h 127.0.0.1", "-l", str(tmp / "pg.log"), "-w", "start"],
-                   check=True, **quiet)
+    try:
+        subprocess.run([exe("initdb"), "-D", str(tmp / "data"), "-U", "postgres", "-A", "trust", "-E", "UTF8"], check=True, **quiet)
+        # not captured: the server started by pg_ctl inherits the handles, a capture would wait for it forever
+        subprocess.run([exe("pg_ctl"), "-D", str(tmp / "data"), "-o", f"-p {port} -h 127.0.0.1", "-l", str(tmp / "pg.log"), "-w", "start"],
+                       check=True, **quiet)
+    except subprocess.CalledProcessError:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)  # nothing left behind when the server cannot be set up
+        raise
     url = lambda name: f"postgresql://postgres@127.0.0.1:{port}/{name}"  # noqa: E731
     pg = ["-h", "127.0.0.1", "-p", str(port), "-U", "postgres"]
     results, outputs = [], []
@@ -382,6 +414,7 @@ def main():
         print("----- 2. upload, then a new process (redeploy), access, no BYTEA in list queries")
         phase("upload")
         phase("restart")
+        phase("delete")
         print("----- 3. concurrent uploads against the quota")
         phase("concurrency", PHOTO_CHECK_LOCK="on")
         phase("concurrency", PHOTO_CHECK_LOCK="off")
