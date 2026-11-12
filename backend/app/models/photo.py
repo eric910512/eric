@@ -1,7 +1,9 @@
-"""皮膚照片追蹤 (Phase 1b): symptom_photos, patient_consents.
+"""皮膚照片追蹤 (Phase 1b): symptom_photos, symptom_photo_blobs, patient_consents.
 
 ``symptom_photos`` holds metadata only — the image bytes live in a private storage backend
-(app/services/photo_storage.py), never in the database and never in a public folder. A photo is
+(app/services/photo_storage.py), never in a public folder. With the database backend they are in
+``symptom_photo_blobs`` (BYTEA, one row per variant), a separate table that list and history queries never
+touch: ``SymptomPhoto`` has no relationship to it, so an image is loaded only by its storage key. A photo is
 uploaded first (``pending``, owned by the uploader) and attached to a symptom record in the same
 transaction that creates the record (``attached``). Pending photos that never get attached are
 discarded by the clean-up (``discarded`` + reason); attached photos are part of the care record and
@@ -14,11 +16,11 @@ that exact text) and when it was revoked. The texts themselves are versioned in 
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, Index, text
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.extensions import db
-from app.models.base import TimestampMixin, generate_uuid
+from app.models.base import TimestampMixin, generate_uuid, utcnow
 
 
 class SymptomPhoto(TimestampMixin, db.Model):
@@ -67,6 +69,34 @@ class SymptomPhoto(TimestampMixin, db.Model):
 
     def __repr__(self):
         return f"<SymptomPhoto {self.public_id} status={self.status!r}>"
+
+
+class SymptomPhotoBlob(db.Model):
+    """The image bytes of one variant of a photo (PHOTO_STORAGE_BACKEND=database). Written in the same
+    transaction as the photo row; read only by the image endpoint, by storage key. No ORM relationship on
+    purpose: nothing can load these bytes by walking from a photo."""
+
+    __tablename__ = "symptom_photo_blobs"
+    __table_args__ = (
+        UniqueConstraint("photo_id", "variant"),
+        CheckConstraint("variant IN ('full', 'thumb')", name="variant"),
+        CheckConstraint("content_type = 'image/jpeg'", name="content_type"),
+        CheckConstraint("byte_size > 0 AND byte_size <= 5242880", name="byte_size"),  # backstop: images are ≤ 1600 px
+        CheckConstraint("length(data) = byte_size", name="data_size"),  # catches a truncated write
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    photo_id: Mapped[int] = mapped_column(db.ForeignKey("symptom_photos.id", ondelete="RESTRICT"), nullable=False)
+    variant: Mapped[str] = mapped_column(db.String(10), nullable=False)
+    storage_key: Mapped[str] = mapped_column(db.String(200), unique=True, nullable=False)
+    content_type: Mapped[str] = mapped_column(db.String(50), nullable=False)
+    byte_size: Mapped[int] = mapped_column(nullable=False)
+    sha256: Mapped[str] = mapped_column(db.String(64), nullable=False)
+    data: Mapped[bytes] = mapped_column(db.LargeBinary, nullable=False)  # BYTEA (STORAGE EXTERNAL, migration)
+    created_at: Mapped[datetime] = mapped_column(db.DateTime, nullable=False, default=utcnow)
+
+    def __repr__(self):  # never the bytes
+        return f"<SymptomPhotoBlob photo_id={self.photo_id} {self.variant} {self.byte_size} B>"
 
 
 class PatientConsent(TimestampMixin, db.Model):
