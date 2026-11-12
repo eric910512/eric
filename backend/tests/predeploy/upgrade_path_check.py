@@ -115,7 +115,8 @@ with app.app_context(), warnings.catch_warnings():
 
     # ---------------------------------------------------------------- stepwise upgrade
     for rev, label, expect_tables in (("c3e9a1f4b7d2", "Phase 1a", set()), ("e7a2c4f9d1b3", "Phase 1b", {"symptom_photos", "patient_consents"}),
-                                      ("a9d4e2b7c5f1", "Phase 1c", {"care_follow_ups", "care_follow_up_events"})):
+                                      ("a9d4e2b7c5f1", "Phase 1c", {"care_follow_ups", "care_follow_up_events"}),
+                                      ("b8c3f1d7e2a6", "Phase 1b photo storage", {"symptom_photo_blobs"})):
         release()  # PGlite takes one connection at a time: Alembic opens its own
         upgrade(directory=MIG, revision=rev)
         db.session.remove()
@@ -185,7 +186,8 @@ with app.app_context(), warnings.catch_warnings():
     except (RuntimeError, SystemExit):
         refused = True
     db.session.rollback()
-    check("downgrade 1c → 1b refused while follow-up history exists", refused and revision() == "a9d4e2b7c5f1")
+    check("downgrade 1c → 1b refused while follow-up history exists (one transaction: still at the head b8c3f1d7e2a6)",
+          refused and revision() == "b8c3f1d7e2a6")
     db.session.remove()
     db.engine.dispose()
 

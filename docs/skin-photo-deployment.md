@@ -2,6 +2,7 @@
 
 > 狀態：程式已實作，**正式環境預設關閉**。本文件說明照片功能在什麼條件下才會開啟、需要哪些設定，以及部署時的注意事項。
 > 沒有建立任何雲端 bucket、服務帳號或金鑰，也沒有修改 Render 環境變數。設計背景見 `skin-photo-storage-design.md`。
+> **2026-11-12 決定：正式環境優先把照片存在已付費的 Render PostgreSQL（`PHOTO_STORAGE_BACKEND=database`，見 §8），暫不使用 AWS S3。** §2、§6、§7 的 S3 設計保留，作為日後擴充選項。
 
 ## 1. 開關邏輯（`app/services/photo_storage.py`：`init_photos`）
 
@@ -13,6 +14,8 @@ API 啟動時判斷一次，任一條件不符就**關閉上傳**，不會改用
 | 2 | 有可用的儲存後端 | `no_storage_backend` | 上傳與讀取都關閉 |
 | 2a | `PHOTO_STORAGE_BACKEND=local` 只允許 development／testing | `local_storage_not_allowed` | staging／production 一律拒絕本機磁碟 |
 | 2b | `PHOTO_STORAGE_BACKEND=object` 需要全部 `PHOTO_OBJECT_*` 設定 **且** 已安裝 `boto3` | `object_storage_not_configured` | 關閉 |
+| 2c | `PHOTO_STORAGE_BACKEND=database` 需要有效的 `PHOTO_DB_QUOTA_BYTES`（以及合理的警示百分比）| `photo_quota_not_configured` | 關閉 |
+| 2d | `database` 在 staging／production 必須是 PostgreSQL | `database_storage_requires_postgresql` | 關閉 |
 | 3 | staging／production：`PHOTO_CONSENT_APPROVED_VERSION` 必須等於程式中的同意書版本（`app/modules/photo/consent.py` 的 `CONSENT_VERSION`）| `consent_not_approved` | 上傳關閉；已存照片仍可讀取 |
 
 - 預設值：base／staging／production `PHOTO_UPLOADS_ENABLED=false`、沒有儲存後端 → **目前 Render（staging）部署後照片功能是關閉的**，病人頁顯示「照片上傳目前未開放」，文字自評照常。
@@ -168,3 +171,56 @@ python tests/object_storage/photo_object_storage_check.py
   - 開啟 S3 Inventory（每日，含版本），定期比對資料庫，找出「沒有資料列的物件」（例如補償刪除失敗留下的）。程式本身無法列出 bucket，這是刻意的最小權限設計。
   - KMS 金鑰的排程刪除等待期，必須長於所有版本與備份的保存期；否則舊版本與備份都會無法解密。
   - Object Lock（Governance）可防止已送出照片被竄改或刪除，但會讓 lifecycle 刪除舊版本更複雜。是否採用，待院方決定是否需要不可變更的紀錄。
+
+## 8. PostgreSQL 照片儲存（`PHOTO_STORAGE_BACKEND=database`，2026-11-12）
+
+### 8.1 設計
+- 新資料表 `symptom_photo_blobs`（migration `b8c3f1d7e2a6`，接在 `a9d4e2b7c5f1` 之後）：每張照片兩列（`full`、`thumb`），`data` 為 BYTEA（PostgreSQL 上設為 `STORAGE EXTERNAL`：JPEG 不會再壓縮，省去無用的壓縮嘗試）。
+  - 外鍵 `photo_id → symptom_photos.id`（RESTRICT），`UNIQUE(photo_id, variant)`、`UNIQUE(storage_key)`。
+  - CHECK：只接受 `image/jpeg`；`0 < byte_size ≤ 5 MiB`；`length(data) = byte_size`（截斷的寫入會被拒絕）。
+  - 降級：資料表有資料時拒絕，除非設定 `ALLOW_DROP_PHOTO_BLOBS=yes`。
+- `symptom_photos` 不變（只存中繼資料），而且與圖片表**沒有** ORM 關聯：列表、歷史、回報、護理師審閱的查詢都不會讀到 BYTEA（測試以 SQL 擷取驗證）。圖片只由 `GET /symptom-photos/{id}/content` 依 storage key 讀取一列。
+- 一致性：
+  - 上傳時，照片列、兩張圖片與 Idempotency-Key 在**同一個交易**寫入；任何失敗都整筆回滾，不需要補償刪除。
+  - 移除（送出前移除、逾時清理）時，「pending → discarded」與刪除圖片在**同一個交易**；刪除失敗時照片維持 pending，圖片也保留。
+  - 資料庫備份或還原時，圖片與紀錄一起還原，不會彼此脫節。
+- 上傳流程、同意書、圖片重新編碼與 EXIF 移除、權限、重試與 Idempotency-Key 全部沿用，沒有變更。S3 實作保留為 `object` 選項；`database` 不需要任何 AWS 設定。
+
+### 8.2 容量配額與監控
+| 變數 | 說明 |
+|---|---|
+| `PHOTO_DB_QUOTA_BYTES` | **必填，沒有預設值**（未設定時照片功能關閉）。指已儲存圖片位元組的總和。第一次測試部署：`209715200`（200 MiB）。 |
+| `PHOTO_DB_WARN_PERCENT`／`PHOTO_DB_CRITICAL_PERCENT` | 選填，預設 70／85：超過時寫入警示 log（每個程序每小時最多一次，不含病人資料）。 |
+| `PHOTO_DB_DISK_BYTES` | 選填：資料庫磁碟大小，供報表計算使用率。 |
+
+- **並行上傳**：檢查配額前先取得 PostgreSQL 交易層級的 advisory lock（`pg_advisory_xact_lock`），直到 commit／rollback 才釋放。同時上傳的請求因此依序檢查並寫入，不會一起通過檢查而超額。已用真實 PostgreSQL 驗證：8 個並行上傳時，有鎖不超額；拿掉鎖的對照組會超額。
+- **已滿**：回 `507 PHOTO_STORAGE_FULL`，不儲存任何東西；前端顯示「無法使用」、不提供重試。文字回報、聊天室、已存照片的讀取都不受影響。
+- **報表**：`flask --app run photos storage-report` 顯示：
+  - 圖片張數與位元組；
+  - 配額使用率；
+  - `symptom_photo_blobs` 實際大小（含 TOAST 與索引）；
+  - 資料庫總大小。
+
+  不輸出病人、照片 id 或 key。Exit code：0 = 正常、1 = 警示、2 = 嚴重，可供 cron job 使用。
+- **建議**：配額不超過資料庫磁碟的一半左右，保留空間給 WAL、vacuum 與其他資料表。磁碟一旦用滿，聊天室與回報也會停擺。
+
+### 8.3 對 PostgreSQL 的影響（實測：本機 PostgreSQL 16，合成資料；Render 為 17）
+- 空間：圖片 199.9 MiB 時，資料表約 207.6 MiB（約多 4%），資料庫總大小 218.3 MiB。
+- 備份：`pg_dump -Fc` 約 227.9 MiB、耗時 21 秒；`pg_restore` 約 8 秒（本機磁碟）。還原後所有圖片的 sha256 一致。
+  - Render 的備份與還原時間會隨照片量增加（INFERRED）。
+  - **匯出檔含病人照片**，下載與保存須依院方規定。
+- WAL：每張圖片寫入時，完整內容會進入 WAL（INFERRED），PITR 期間會保留這些 WAL。
+- 刪除：圖片列刪除後，空間由 autovacuum 回收再利用，但不會還給作業系統（INFERRED）。已刪除的照片會留在備份與 PITR 期間內，須與同意書文字及保存政策一致。
+- 查詢：列表與歷史查詢不讀圖片（已驗證）。讀一張圖片是一次依唯一索引的查詢。照片量大時，可能擠掉其他資料表的快取（INFERRED，需觀察）。
+
+### 8.4 測試
+- `backend/tests/test_photo_db_storage.py`（SQLite，納入 `run_all.py`）：
+  - 開關（配額來自環境變數、不合理的值會關閉功能、staging 需要 PostgreSQL）；
+  - 一筆交易寫入、資料庫寫入失敗與 commit 失敗時完整回滾、刪除失敗時不變；
+  - 重複請求、配額剛好等於上限、507、警示；
+  - 列表查詢不碰 BYTEA；`verify`／`storage-report`；權限。
+- `backend/tests/predeploy/photo_db_storage_check.py`：真實 PostgreSQL，以 `pgserver` 套件在本機臨時啟動，只裝在本機 venv。
+  - BYTEA、`STORAGE EXTERNAL`、限制與外鍵；
+  - 跨程序讀取；並行配額（含對照組）；200 MiB 配額；
+  - `pg_dump`／`pg_restore`；降級保護。
+- E2E：以 `PHOTO_STORAGE_BACKEND=database PHOTO_DB_QUOTA_BYTES=209715200` 執行 `skin-photo` 等照片相關 suite（只用環境變數，不改 `run.mjs`）。

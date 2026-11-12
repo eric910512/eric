@@ -249,3 +249,20 @@
 - 行為：照片功能仍預設關閉，`render.yaml` 沒有設定 `PHOTO_UPLOADS_ENABLED`（VERIFIED）。聊天室、其他 API、migration、seed、`render.yaml`、`render_start.sh` 都沒有變更（VERIFIED，`git diff --name-only db1c422..`）。
 - 隔離相容性：commit 後以 `run_isolated_checks.sh 71e9d8e feature/skin-follow-up` 與 `run_bridge_checks.sh <橋接 backend> 71e9d8e feature/skin-follow-up` 重新驗證，結果記錄在事件紀錄（不寫入本文件，避免 commit 引用自己）。
 - Go／No-Go：§13 與 §16.4 的 UNKNOWN 與院方核可事項不變，**整體仍為 NO-GO**（正式部署）。
+
+## 18. 照片改存 PostgreSQL：第四個 migration（2026-11-12 補充）
+
+- 決定：照片優先存在已付費的 Render PostgreSQL（`PHOTO_STORAGE_BACKEND=database`），暫不用 AWS S3；設計與實測見 `docs/skin-photo-deployment.md` §8。
+- 新 migration `b8c3f1d7e2a6`（`symptom_photo_blobs`），接在 `a9d4e2b7c5f1` 之後；新 head = `b8c3f1d7e2a6`（VERIFIED，`flask db heads`）。只新增一張表，既有資料表與資料列不變。
+- 橋接版本：已在橋接分支加入同一個檔案，commit `9c2f522`（接在 `d6c157a` 之後）。完整版本與橋接版本的 11 個 migration 以 git blob 比對完全相同（VERIFIED）。若只部署 `d6c157a`，完整版本把資料庫升到 `b8c3f1d7e2a6` 之後就無法回復到它（`Can't locate revision`，與 §16 相同機制），因此部署的橋接版本必須是 `9c2f522`。
+- 隔離驗證（VERIFIED，PGlite）：
+  - `run_isolated_checks.sh 71e9d8e <工作目錄>`：34/34，ALL PASSED。
+  - `run_bridge_checks.sh <橋接 worktree> 71e9d8e <工作目錄>`：ALL BRIDGE CHECKS PASSED。新增「第 4 個 migration 失敗」情境：資料庫停在 `b5cd01c11e1d`，`71e9d8e` 可重新啟動。
+- 真實 PostgreSQL 16（本機臨時，合成資料；Render 為 17）：`backend/tests/predeploy/photo_db_storage_check.py` 39/39，涵蓋：
+  - BYTEA 與 `STORAGE EXTERNAL`；
+  - 並行配額：有鎖不超額，對照組無鎖會超額；
+  - 200 MiB 配額 → 507；
+  - `pg_dump`／`pg_restore` 後圖片一致；
+  - 降級保護。
+- 啟動流程：`render_start.sh` 不變，第四個 migration 在 API 啟動時由 `flask db upgrade` 一併執行，與前三個屬於同一個交易（VERIFIED，原子性情境）。
+- 照片功能仍預設關閉；正式啟用需要 `PHOTO_UPLOADS_ENABLED=true`、`PHOTO_STORAGE_BACKEND=database`、`PHOTO_DB_QUOTA_BYTES`、院方核可的同意書版本（**本次都未設定**）。

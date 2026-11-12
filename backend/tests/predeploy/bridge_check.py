@@ -53,7 +53,7 @@ app = create_app("staging")
 c = app.test_client()
 PROTECTED = ("users", "patient_profiles", "nurse_patient_assignments", "chat_messages", "chat_read_states",
              "symptom_records", "symptom_record_values", "nursing_assessments", "notifications")
-NEW_FEATURE = ("care_follow_ups", "care_follow_up_events", "patient_consents", "symptom_photos")
+NEW_FEATURE = ("care_follow_ups", "care_follow_up_events", "patient_consents", "symptom_photos", "symptom_photo_blobs")
 
 
 def token(email):
@@ -95,7 +95,7 @@ with app.app_context(), warnings.catch_warnings():
         release()
         upgrade(directory=os.path.join(BACKEND, "migrations"))
         release()
-        check("bridge `flask db upgrade` → a9d4e2b7c5f1", q("SELECT version_num FROM alembic_version") == "a9d4e2b7c5f1")
+        check("bridge `flask db upgrade` → b8c3f1d7e2a6", q("SELECT version_num FROM alembic_version") == "b8c3f1d7e2a6")
         check("protected data byte-for-byte unchanged — incl. users (password hashes, updated_at): no seed ran",
               fingerprint(PROTECTED) == before, {k: v for k, v in fingerprint(PROTECTED).items() if before[k] != v})
         names = set(inspect(db.session.connection()).get_table_names())

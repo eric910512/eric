@@ -7,7 +7,7 @@
 #      (tests/predeploy/upgrade_path_check.py); then the OLD code's start script on that database (must fail:
 #      "Can't locate revision") while an already running old instance still serves; guarded downgrade.
 #   B. the three migrations in ONE `flask db upgrade` are atomic (a failing Phase 1c step rolls back 1a and 1b).
-#   C. BRIDGE build (deployed code + only the three new migration files): schema-first upgrade, then rollback
+#   C. BRIDGE build (deployed code + only the new migration files): schema-first upgrade, then rollback
 #      target after the new code ran (its start script must succeed).
 #
 # Usage (from the repository root): bash backend/tests/predeploy/run_isolated_checks.sh [OLD_COMMIT] [NEW_COMMIT]
@@ -24,8 +24,12 @@ export SECRET_KEY=$($PY -c "import secrets;print(secrets.token_hex(32))") JWT_SE
 unset PHOTO_UPLOADS_ENABLED PHOTO_STORAGE_BACKEND SEED_DEMO_DATA ALLOW_DROP_CARE_FOLLOW_UPS
 
 mkdir -p "$TMP/old" "$TMP/new" "$TMP/bridge"
-(cd "$ROOT" && git archive "$OLD" backend | tar -x -C "$TMP/old" && git archive "$NEW" backend | tar -x -C "$TMP/new" \
-  && git archive "$OLD" backend | tar -x -C "$TMP/bridge")
+# the release: a commit (git archive) or a checkout directory (its working tree, e.g. changes not committed yet;
+# instance/, .env and caches are left out)
+export_backend() { if [ -d "$1/backend" ]; then tar -C "$1" --exclude=backend/instance --exclude=backend/.env --exclude=__pycache__ -cf - backend | tar -x -C "$2"
+                   else (cd "$ROOT" && git archive "$1" backend | tar -x -C "$2"); fi; }
+(cd "$ROOT" && git archive "$OLD" backend | tar -x -C "$TMP/old" && git archive "$OLD" backend | tar -x -C "$TMP/bridge")
+export_backend "$NEW" "$TMP/new"
 for f in $(cd "$TMP/new/backend/migrations/versions" && ls *.py); do
   [ -f "$TMP/old/backend/migrations/versions/$f" ] || cp "$TMP/new/backend/migrations/versions/$f" "$TMP/bridge/backend/migrations/versions/$f"
 done
@@ -77,7 +81,7 @@ stop_pg
 echo "===== C. bridge build: schema-first and rollback target"
 start_pg 55453
 expect "bridge start script applies the new migrations" "$(up "$BRIDGEB")" 0
-expect "…revision" "$(sql 'SELECT version_num FROM alembic_version')" a9d4e2b7c5f1
+expect "…revision" "$(sql 'SELECT version_num FROM alembic_version')" b8c3f1d7e2a6
 expect "new code start script after the bridge: no-op" "$(up "$NEWB")" 0
 expect "rollback to the bridge: its start script succeeds" "$(up "$BRIDGEB")" 0
 expect "rollback to the plain old commit: its start script fails" "$(up "$OLDB")" 1

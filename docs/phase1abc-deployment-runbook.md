@@ -1,8 +1,8 @@
 # Phase 1a～1c 正式部署 Runbook（**未來操作計畫，本次未執行**）
 
-> 適用：從聊天室版本（`71e9d8e`，revision `b5cd01c11e1d`）部署到 Phase 1a～1c 完整版本（revision `a9d4e2b7c5f1`）。
+> 適用：從聊天室版本（`71e9d8e`，revision `b5cd01c11e1d`）部署到 Phase 1a～1c 完整版本（revision `b8c3f1d7e2a6`）。
 > **完整版本＝審查通過時 `feature/skin-follow-up` 的最新 commit**（2026-11-12 起為 `db1c422` 之後再加 6 組照片儲存修正；migration 未變）。本文件刻意不寫入該 hash，避免 commit 引用自己；部署時以 `git rev-parse feature/skin-follow-up` 取得，並記錄到事件紀錄，以下稱 `<FULL>`。
-> 建議策略：**C — 先部署「橋接版本」（`71e9d8e` + 三個 migration 檔），驗收後再部署完整版本**。若未核准橋接版本，見文末「策略 A 差異」。
+> 建議策略：**C — 先部署「橋接版本」（`71e9d8e` + 四個 migration 檔），驗收後再部署完整版本**。若未核准橋接版本，見文末「策略 A 差異」。
 > 稽核依據：`docs/phase1abc-predeployment-audit.md`。每一步都要記錄操作者、時間、結果到事件紀錄。
 
 ## Phase 0：部署授權與維護窗口
@@ -17,7 +17,7 @@
   1. Render Dashboard：`cancer-care-api`、`cancer-care-web` 目前部署 commit 應為 `71e9d8e`；Auto-Deploy = Off；部署分支 = main。
   2. 環境變數（只看不改）：`FLASK_ENV=staging`、`SEED_DEMO_DATA=false`、未設定 `PHOTO_UPLOADS_ENABLED` / `PHOTO_STORAGE_BACKEND`（或為 false / 空）。**不要重新套用 Blueprint**（`render.yaml` 內 `SEED_DEMO_DATA="true"`）。
   3. 正式 revision：部署 log 或唯讀 `SELECT version_num FROM alembic_version;` → 必須是 `b5cd01c11e1d`。
-  4. 本機：`git fetch`；`origin/main` = `71e9d8e`；`feature/skin-follow-up` = 已審查的 `<FULL>`（與事件紀錄一致）；`flask db heads` = `a9d4e2b7c5f1`。
+  4. 本機：`git fetch`；`origin/main` = `71e9d8e`；`feature/skin-follow-up` = 已審查的 `<FULL>`（與事件紀錄一致）；`flask db heads` = `b8c3f1d7e2a6`。
 - **驗收**：全部相符。**失敗處理**：任何不符 → 停止，回到稽核。**人工授權**：Render 唯讀檢視需要有權限者。
 
 ## Phase 2：備份與隔離還原驗證
@@ -40,18 +40,18 @@
 ## Phase 4：Migration 執行計畫（橋接版本，schema-first）
 - **前置**：已授權建立橋接 commit。
 - **操作**：
-  1. 橋接候選：分支 `feature/phase1abc-schema-bridge`（worktree `D:\app-worktrees\phase1abc-schema-bridge`，基礎 `71e9d8e`），只含三個 migration 檔（內容與完整版本 `<FULL>` 相同）；本機橋接 commit `d6c157a` 已建立（2026-11-12）。**先確認 Render 目前執行的 commit 就是 `71e9d8e`**（2026-11-12 已由 Dashboard 確認 Live Commit = `71e9d8e`）；若不是，以實際部署的 commit 為基礎重建橋接版本並重跑驗證。部署前再跑一次 `bash backend/tests/predeploy/run_bridge_checks.sh <橋接 backend 目錄> <部署中的 commit> <FULL>`，必須 ALL BRIDGE CHECKS PASSED。
+  1. 橋接候選：分支 `feature/phase1abc-schema-bridge`（worktree `D:\app-worktrees\phase1abc-schema-bridge`，基礎 `71e9d8e`），只含四個 migration 檔（`c3e9a1f4b7d2`、`e7a2c4f9d1b3`、`a9d4e2b7c5f1`、`b8c3f1d7e2a6`，內容與完整版本 `<FULL>` 相同）。本機橋接 commit：`d6c157a`（前三個）＋ `9c2f522`（第四個，照片 PostgreSQL 儲存；2026-11-12）。**先確認 Render 目前執行的 commit 就是 `71e9d8e`**（2026-11-12 已由 Dashboard 確認 Live Commit = `71e9d8e`）；若不是，以實際部署的 commit 為基礎重建橋接版本並重跑驗證。部署前再跑一次 `bash backend/tests/predeploy/run_bridge_checks.sh <橋接 backend 目錄> <部署中的 commit> <FULL>`，必須 ALL BRIDGE CHECKS PASSED。
   2. 經授權後讓 main 指向橋接 commit 並 push。
   3. Render：手動部署 `cancer-care-api`（Web **不**部署）。
-- **預期**：部署 log 依序出現 `Running upgrade b5cd01c11e1d -> c3e9a1f4b7d2`、`-> e7a2c4f9d1b3`、`-> a9d4e2b7c5f1`，之後 gunicorn 啟動、health 200。**不得**出現 `seed dev` 的輸出。
-- **驗收**：health 200；聊天室冒煙（Phase 7 聊天部分）通過；唯讀確認 revision = `a9d4e2b7c5f1`。
+- **預期**：部署 log 依序出現 `Running upgrade b5cd01c11e1d -> c3e9a1f4b7d2`、`-> e7a2c4f9d1b3`、`-> a9d4e2b7c5f1`、`-> b8c3f1d7e2a6`，之後 gunicorn 啟動、health 200。**不得**出現 `seed dev` 的輸出。
+- **驗收**：health 200；聊天室冒煙（Phase 7 聊天部分）通過；唯讀確認 revision = `b8c3f1d7e2a6`。
 - **失敗處理**：migration 失敗 → 交易回滾、資料庫留在 `b5cd01c11e1d`（第 2、3 個 migration 失敗皆已驗證）、舊實例續用；必要時重新部署 `71e9d8e`（在 `b5cd01c11e1d` 可正常啟動，已驗證）→ 停止並調查（不需資料庫處理）。
 - **停止條件**：部署 log 出現 `b5cd01c11e1d -> c3e9a1f4b7d2` 以外的起點（例如 `f1a7c3d2b9e4 ->`），代表正式 revision 與預期不同 → 調查（橋接版本仍可完成，但必須先釐清原因）。
 - **人工授權**：commit／push／deploy 各需授權。
 
 ## Phase 5：API 部署（完整版本）
 - **前置**：Phase 4 驗收通過；觀察至少一段時間無異常。
-- **操作**：main 合併 `feature/skin-follow-up`（`<FULL>`；三個 migration 檔與橋接 commit 新增的檔案內容相同，`git merge-tree` 無衝突）並 push；手動部署 `cancer-care-api`。
+- **操作**：main 合併 `feature/skin-follow-up`（`<FULL>`；四個 migration 檔與橋接 commit 新增的檔案內容相同，`git merge-tree` 無衝突）並 push；手動部署 `cancer-care-api`。
 - **預期**：log 中 `flask db upgrade` **沒有** `Running upgrade`（已在 head）；build 安裝 Pillow 與 boto3／botocore 等套件（照片關閉時不會載入 boto3）；health 200。
 - **驗收**：`GET /api/v1/symptom-photos/settings`（以訓練帳號）→ `upload_enabled: false`；Phase 7 API 冒煙通過。
 - **失敗處理**：啟動失敗 → Render 保留舊實例（橋接版本，可正常重啟）；修正後重新部署（forward fix）。程式問題需要回復 → 重新部署**橋接 commit**（已驗證可在新 schema 啟動）。
@@ -86,12 +86,12 @@
 | Migration 失敗 | 自動回滾；資料庫不變；舊實例續用；調查後重試 |
 | 完整版本啟動失敗 | 舊實例續用；forward fix；必要時重新部署橋接 commit |
 | 完整版本有功能問題 | forward fix；或回到橋接 commit（資料庫維持 head，新功能資料保留但無介面）|
-| 必須回到純聊天室版本 | 需另行授權：以新程式 `flask db downgrade b5cd01c11e1d`（追蹤資料存在時需 `ALLOW_DROP_CARE_FOLLOW_UPS=yes`，**會刪除追蹤／照片／同意資料**；Free 方案需暫時更改 start command 或 shell）→ 再部署 `71e9d8e` |
+| 必須回到純聊天室版本 | 需另行授權：以新程式 `flask db downgrade b5cd01c11e1d`（追蹤資料存在時需 `ALLOW_DROP_CARE_FOLLOW_UPS=yes`、照片圖片存在時需 `ALLOW_DROP_PHOTO_BLOBS=yes`，**會刪除追蹤／照片／同意資料**；Free 方案需暫時更改 start command 或 shell）→ 再部署 `71e9d8e` |
 | 資料毀損 | 以 Phase 2 驗證過的備份／PITR 還原到新資料庫，改指 `DATABASE_URL`；還原點之後資料遺失 |
 - **絕對不要**：在資料庫已升級後直接重新部署 `71e9d8e`（啟動會失敗）；重新套用 Blueprint；設定 `SEED_DEMO_DATA=true`；啟用照片功能。
 - 事件紀錄：時間軸、操作者、log 摘要（不含病人資料）、影響範圍、復原結果、後續改善。
 
 ## 策略 A 差異（若不建立橋接版本）
-- 跳過 Phase 4；Phase 5 直接部署 `<FULL>`，log 應出現三個 `Running upgrade`。
+- 跳過 Phase 4；Phase 5 直接部署 `<FULL>`，log 應出現四個 `Running upgrade`。
 - 回復選項只剩 forward fix、資料庫 downgrade（資料遺失）或還原；**不可**回到 `71e9d8e`。
 - 部署與觀察期間建議 API 暫時使用不休眠的方案，降低舊實例重啟造成中斷的機率。
