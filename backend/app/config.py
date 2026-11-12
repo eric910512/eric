@@ -18,6 +18,17 @@ def _flag(name, default):
     return default if raw is None or not raw.strip() else raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _number(name, default, cast):
+    """A numeric setting; None when the value is not a number (the feature using it then refuses to start)."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return cast(raw.strip())
+    except ValueError:
+        return None
+
+
 def _database_url():
     url = os.environ.get("DATABASE_URL", "sqlite:///app.db")
     # Some hosts hand out "postgres://"; SQLAlchemy only accepts "postgresql://".
@@ -133,6 +144,12 @@ class Config:
     PHOTO_OBJECT_ACCESS_KEY_ID = os.environ.get("PHOTO_OBJECT_ACCESS_KEY_ID")  # secret: environment only
     PHOTO_OBJECT_SECRET_ACCESS_KEY = os.environ.get("PHOTO_OBJECT_SECRET_ACCESS_KEY")  # secret: environment only
     PHOTO_CONSENT_APPROVED_VERSION = os.environ.get("PHOTO_CONSENT_APPROVED_VERSION")
+    # The S3 client (PrivateObjectStorage builds it once from these; every photo request shares it). An
+    # unreachable or hanging bucket must not hold a request (gunicorn timeout 60 s): one S3 call waits at
+    # most MAX_ATTEMPTS × (CONNECT + READ) seconds — at most 20 s, or photos stay off (photo_storage.py).
+    PHOTO_OBJECT_CONNECT_TIMEOUT = _number("PHOTO_OBJECT_CONNECT_TIMEOUT", 3.0, float)  # seconds
+    PHOTO_OBJECT_READ_TIMEOUT = _number("PHOTO_OBJECT_READ_TIMEOUT", 5.0, float)  # seconds without data from S3
+    PHOTO_OBJECT_MAX_ATTEMPTS = _number("PHOTO_OBJECT_MAX_ATTEMPTS", 2, int)  # including the first; 1 = no retry
     PHOTO_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
     PHOTO_MAX_PIXELS = 40_000_000  # checked before decoding (decompression bombs)
     PHOTO_MIN_SIDE = 64

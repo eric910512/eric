@@ -232,7 +232,8 @@ def create_pending_photo(patient, user, image, stored_keys):
         stored_keys.append(photo.storage_key)
         storage.put(photo.thumb_storage_key, image.thumb, STORED_TYPE)
         stored_keys.append(photo.thumb_storage_key)
-    except PhotoStorageError:
+    except PhotoStorageError as exc:
+        current_app.logger.warning("photo storage write failed (%s)", exc.reason)  # a code only: no bucket / key / patient
         raise APIError(503, "PHOTO_STORAGE_UNAVAILABLE", "照片暫時無法儲存，請稍後再試") from None
     db.session.add(photo)
     db.session.flush()
@@ -242,13 +243,19 @@ def create_pending_photo(patient, user, image, stored_keys):
 
 
 def remove_stored(keys):
-    """Remove stored files, best effort (a leftover is found and removed by ``flask photos verify --fix``)."""
+    """Remove stored files, best effort (a leftover is found and removed by ``flask photos verify --fix``).
+    Stops at the first storage failure: with the storage down, every further call would only wait for its
+    own timeout (the upload request runs the opportunistic clean-up first)."""
     storage = feature().storage
     for key in keys:
         try:
             storage.delete(key)
-        except (PhotoStorageError, ValueError):
+        except ValueError:
             pass
+        except PhotoStorageError as exc:
+            current_app.logger.warning("photo storage delete failed (%s); remaining removals skipped — "
+                                       "`flask photos verify --fix` removes leftovers", exc.reason)
+            break
 
 
 def photo_keys(photo):
@@ -297,8 +304,7 @@ def purge_expired_pending(limit=50, now=None):
         ))
     if discarded:
         db.session.commit()
-        for photo in discarded:
-            remove_stored(photo_keys(photo))
+        remove_stored([key for photo in discarded for key in photo_keys(photo)])  # one call: stops at the first failure
     return len(discarded)
 
 
@@ -434,7 +440,8 @@ def read_bytes(photo, variant):
         raise APIError(503, "PHOTO_STORAGE_UNAVAILABLE", "照片暫時無法讀取")
     try:
         data = f.storage.get(photo.thumb_storage_key if variant == "thumb" else photo.storage_key)
-    except PhotoStorageError:
+    except PhotoStorageError as exc:
+        current_app.logger.warning("photo storage read failed (%s; symptom_photos.id=%s)", exc.reason, photo.id)
         raise APIError(503, "PHOTO_STORAGE_UNAVAILABLE", "照片暫時無法讀取") from None
     if data is None:  # the row exists but the file does not: an integrity problem, not "no access"
         current_app.logger.warning("photo file missing (symptom_photos.id=%s); run `flask photos verify`", photo.id)
