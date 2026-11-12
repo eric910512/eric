@@ -13,8 +13,9 @@
  *   (503 PHOTO_STORAGE_UNAVAILABLE, 429 RATE_LIMITED). That key would only ever repeat this answer: the next
  *   attempt uses a NEW key. (A duplicate is still impossible: the API returns the already pending copy of the
  *   same picture instead of storing it twice.)
- * - `rejected`: the request itself is not acceptable (400, 401, 403, 404, 413, 415, 422 …, or photos switched
- *   off). Not a temporary failure: no retry — the patient removes or chooses the photo again.
+ * - `rejected`: the request itself is not acceptable (400, 401, 403, 404, 413, 415, 422 …), photos are switched
+ *   off, or the photo storage is full (507 PHOTO_STORAGE_FULL: nothing stored; text reports still work). Not a
+ *   temporary failure: no retry — the patient removes the photo (or chooses it again later).
  */
 export const NOT_CREATED_RETRYABLE = new Set(['PHOTO_STORAGE_UNAVAILABLE', 'RATE_LIMITED'])
 
@@ -31,7 +32,7 @@ export function classifyUploadFailure(err) {
     return { kind: 'not_created', retry: true, newKey: true, message: err.message || '照片暫時無法儲存，請稍後再試' }
   }
   const rejected = { kind: 'rejected', retry: false, newKey: true, message: err.message || '這張照片無法上傳' }
-  if (code === 'PHOTO_UPLOADS_DISABLED') return rejected // photos are switched off: retrying cannot help
+  if (code === 'PHOTO_UPLOADS_DISABLED' || code === 'PHOTO_STORAGE_FULL') return rejected // retrying cannot help
   // any other 5xx is not one of the API's definite answers (502 / 504 from the proxy, an unexpected 500): the
   // result is not known. The API lets the same key run again after an unexpected 500 and replays a created photo.
   if (status >= 500) return unknown

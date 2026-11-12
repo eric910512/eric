@@ -39,6 +39,7 @@ for (const [status, code] of [
   [400, 'VALIDATION_ERROR'], [401, 'TOKEN_INVALID'], [401, 'UNAUTHORIZED'], [403, 'PHOTO_CONSENT_REQUIRED'], [403, 'FORBIDDEN'],
   [404, 'NOT_FOUND'], [409, 'CONSENT_VERSION_MISMATCH'], [413, 'PHOTO_TOO_LARGE'], [415, 'PHOTO_UNSUPPORTED_TYPE'],
   [422, 'IDEMPOTENCY_KEY_MISMATCH'], [428, 'IDEMPOTENCY_KEY_REQUIRED'], [503, 'PHOTO_UPLOADS_DISABLED'],
+  [507, 'PHOTO_STORAGE_FULL'],
 ]) {
   test(`${status} ${code}: rejected, not a temporary failure → no retry`, () => {
     const o = classifyUploadFailure(api(status, code, `訊息 ${code}`))
