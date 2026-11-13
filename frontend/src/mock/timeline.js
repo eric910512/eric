@@ -74,14 +74,19 @@ function build(patientId, staff) {
   for (const a of mockTimelineAppointments(patientId, staff)) events.push(ev(patientId, { ...a, _rank: RANK.APPOINTMENT }))
 
   for (const r of mockListRecords(patientId, { reviewStatus: 'all' }).data) {
+    // = timeline._symptoms: a choice answer shows its option text (深紅 / 有 / 是), never its score
     const values = r.values.map((v) => (v.value_boolean !== undefined
       ? { code: v.definition_code, label: v.label, value: v.value_boolean ? '有' : '沒有' }
-      : { code: v.definition_code, label: v.label, value: String(v.score), score: v.score }))
-    const scored = values.filter((v) => v.score != null).sort((a, b) => b.score - a.score)
-    const fever = values.some((v) => v.value === '有')
+      : v.option_label !== undefined
+        ? { code: v.definition_code, label: v.label, value: v.option_label, option_code: v.option_code ?? null }
+        : { code: v.definition_code, label: v.label, value: String(v.score), score: v.score }))
+    const ranked = r.values.filter((v) => v.value_boolean === undefined && v.score != null)
+      .map((v) => ({ score: v.score, text: v.option_label !== undefined ? `${v.label}：${v.option_label}` : `${v.label} ${v.score}` }))
+      .sort((a, b) => b.score - a.score)
+    const fever = values.some((v) => v.value === '有' && v.option_code === undefined)
     events.push(ev(patientId, { event_id: `SYMPTOM:${r.id}`, event_type: 'SYMPTOM', occurred_at: r.recorded_at, title: '症狀回報',
-      summary: [...scored.slice(0, 3).map((v) => `${v.label} ${v.value}`), ...(fever ? ['發燒或畏寒'] : [])].join('、'),
-      severity: fever ? 'critical' : scored[0]?.score >= 7 ? 'warning' : null, source: { table: 'symptom_records', id: r.id },
+      summary: [...ranked.slice(0, 3).map((v) => v.text), ...(fever ? ['發燒或畏寒'] : [])].join('、'),
+      severity: fever ? 'critical' : ranked[0]?.score >= 7 ? 'warning' : null, source: { table: 'symptom_records', id: r.id },
       cycle_day: r.cycle_day, _rank: RANK.SYMPTOM,
       detail: { values, notes: r.notes, reviewed: r.review_status === 'reviewed',
         ...(staff ? { review_status: r.review_status, reviewed_by: r.reviewed_by?.display_name ?? null } : {}) } }))

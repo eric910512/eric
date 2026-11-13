@@ -67,6 +67,9 @@ const GROUPS = [
   { suites: ['home-redesign'] },
   { suites: ['education-video'] },
   { suites: ['chat'] },
+  { suites: ['skin-assessment'] },
+  { suites: ['skin-photo'] },
+  { suites: ['skin-follow-up'] },
   // 1-minute access tokens (the existing JWT_ACCESS_TOKEN_MINUTES setting): real expiry → refresh
   { suites: ['refresh'], env: { JWT_ACCESS_TOKEN_MINUTES: '1' } },
   ...(PROD ? [{ suites: ['deploy'] }] : []),
@@ -155,6 +158,9 @@ const backendEnv = () => (PROD
   : {
       FLASK_ENV: 'development', DATABASE_URL: `sqlite:///${DB_FILE.replaceAll('\\', '/')}`, PYTHONIOENCODING: 'utf-8',
       EMAIL_PROVIDER: 'capture', EMAIL_CAPTURE_DIR: EMAIL_OUTBOX, APP_BASE_URL: URL.web,
+      // 皮膚照片: private local storage in the (git-ignored) artifacts folder, never backend/instance.
+      // The production simulation (staging) keeps photos off: no object storage is configured.
+      PHOTO_LOCAL_DIR: path.join(OUT, 'private-photos'),
     })
 
 async function startFrontends() {

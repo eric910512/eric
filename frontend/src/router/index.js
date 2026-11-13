@@ -16,6 +16,7 @@ import Login from '@/views/Login.vue'
 import MyTreatment from '@/views/MyTreatment.vue'
 import NotificationCenter from '@/views/NotificationCenter.vue'
 import NurseDashboard from '@/views/NurseDashboard.vue'
+import NurseFollowUps from '@/views/NurseFollowUps.vue'
 import NurseMessages from '@/views/NurseMessages.vue'
 import NursingAssessments from '@/views/NursingAssessments.vue'
 import PatientChat from '@/views/PatientChat.vue'
@@ -24,6 +25,7 @@ import PatientDetail from '@/views/PatientDetail.vue'
 import PatientList from '@/views/PatientList.vue'
 import PatientNotifications from '@/views/PatientNotifications.vue'
 import PatientProfile from '@/views/PatientProfile.vue'
+import PatientSkinAssessment from '@/views/PatientSkinAssessment.vue'
 import PatientSymptoms from '@/views/PatientSymptoms.vue'
 import ReviewQueue from '@/views/ReviewQueue.vue'
 import VerifyEmail from '@/views/VerifyEmail.vue'
@@ -63,6 +65,13 @@ export const router = createRouter({
       name: 'patient-symptoms',
       component: PatientSymptoms,
       meta: { title: '症狀回報', requiresAuth: true, roles: ['patient'] },
+    },
+    {
+      // 放射治療皮膚反應自我評估 (Phase 1a, text only)
+      path: '/patient/skin',
+      name: 'patient-skin',
+      component: PatientSkinAssessment,
+      meta: { title: '皮膚自我評估', requiresAuth: true, roles: ['patient'] },
     },
     {
       path: '/patient/notifications',
@@ -136,6 +145,13 @@ export const router = createRouter({
       name: 'nurse-messages',
       component: NurseMessages,
       meta: { title: '病人訊息', requiresAuth: true, roles: ['nurse'] },
+    },
+    {
+      // 追蹤管理 (Phase 1c); above /nurse/:patientId? as well
+      path: '/nurse/follow-ups',
+      name: 'nurse-follow-ups',
+      component: NurseFollowUps,
+      meta: { title: '追蹤管理', requiresAuth: true, roles: ['nurse'] },
     },
     {
       path: '/nurse/:patientId?',

@@ -161,6 +161,12 @@ export { MOCK_PASSWORD, mockUsers } from '@/mock/users'
 export { mockMyMarkRead, mockMyNotification, mockMyNotifications, mockMyReadAll, mockMyUnreadCount } from '@/mock/patientNotifications'
 // 病人與護理師聊天室 (access checks inside: patient / assigned nurse; admin 403)
 export { mockChatInbox, mockChatMessages, mockChatUnreadCount, mockMarkChatRead, mockSendChatMessage } from '@/mock/chat'
+export {
+  mockCancelFollowUp, mockCompleteFollowUp, mockCreateFollowUp, mockFollowUp, mockFollowUpEvents, mockListFollowUps, mockMyFollowUps, mockRescheduleFollowUp,
+} from '@/mock/followUps'
+export {
+  mockAcceptPhotoConsent, mockDiscardPhoto, mockPatientPhotos, mockPhotoContent, mockPhotoSettings, mockRevokePhotoConsent, mockUploadPhoto,
+} from '@/mock/photos'
 
 // admin console: every change is audited (the mock audit log records the admin console's own actions)
 export { mockAdminOverview, mockAdminSettings, mockListForms, mockSearchAudit } from '@/mock/admin'

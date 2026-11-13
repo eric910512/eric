@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 
 import NurseNav from '@/components/NurseNav.vue'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useFollowUpStore } from '@/stores/followUps'
 import { useRecordsStore } from '@/stores/records'
 import { formatTime, localDate } from '@/utils/format'
 
@@ -10,6 +11,7 @@ import { formatTime, localDate } from '@/utils/format'
  * abnormal vital signs and lab results, and alerts not yet taken over. Rows open the patient. */
 const dashboard = useDashboardStore()
 const store = useRecordsStore()
+const followUps = useFollowUpStore() // 追蹤逾期 shortcut (Phase 1c): a work-list hint only
 const TZ = 'Asia/Taipei'
 const q = computed(() => store.queues)
 const when = (iso) => `${localDate(iso, TZ)} ${formatTime(iso, TZ)}`
@@ -22,6 +24,7 @@ const sections = computed(() => [
 ])
 
 onMounted(() => {
+  followUps.fetchList({ status: 'open', patientId: null, page: 1 })
   dashboard.fetchSettings()
   store.fetchQueues()
 })
@@ -35,6 +38,11 @@ onMounted(() => {
         <h1 class="text-2xl font-bold">待審清單</h1>
         <p class="text-ink-soft">目前負責的病人中，等待審閱或處理的項目。</p>
       </header>
+      <RouterLink v-if="followUps.list?.meta.counts" :to="{ name: 'nurse-follow-ups', query: { status: 'overdue' } }"
+        class="inline-flex min-h-11 items-center gap-2 rounded-full px-4 font-bold"
+        :class="followUps.list.meta.counts.overdue ? 'bg-critical-soft text-critical' : 'bg-surface text-ink-soft ring-1 ring-line'" data-queue-follow-ups>
+        追蹤管理：待追蹤 {{ followUps.list.meta.counts.open }}・已逾期 {{ followUps.list.meta.counts.overdue }} →
+      </RouterLink>
       <ul v-if="q" class="flex flex-wrap gap-2" aria-label="數量">
         <li v-for="s in sections" :key="s.key" class="rounded-full bg-surface px-4 py-1.5 ring-1 ring-line" :data-count="s.key">{{ s.title }} <strong>{{ s.count }}</strong></li>
       </ul>
@@ -48,6 +56,7 @@ onMounted(() => {
             <li v-for="s in q.symptoms" :key="s.id">
               <RouterLink :to="{ name: 'nurse', params: { patientId: s.patient.id } }" class="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3 hover:bg-mist">
                 <span class="font-bold">{{ s.patient.display_name }}</span><span class="text-ink-soft">{{ s.patient.patient_code }}</span>
+                <span v-if="s.form?.code === 'rt_skin_self_assessment'" class="rounded-full bg-care-soft px-2 py-0.5 text-sm font-bold text-care" data-queue-form>皮膚自我評估</span>
                 <span class="min-w-0 flex-1">{{ s.summary }}</span>
                 <span v-if="s.open_alert_count" class="rounded-full bg-warn-soft px-2 py-0.5 text-sm font-bold text-warn">警示 {{ s.open_alert_count }}</span>
                 <span class="text-sm text-ink-soft">{{ when(s.recorded_at) }}</span>

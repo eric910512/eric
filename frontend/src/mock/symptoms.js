@@ -7,6 +7,7 @@
 import { ruleOn, threshold } from '@/mock/alertRules'
 import { nowIso } from '@/mock/clock'
 import { addMockSymptomRecord, mockListRecordsStore } from '@/mock/nurseReview'
+import { attachMockPhotos, checkMockPhotos } from '@/mock/photos'
 import { applyToRiskSummary, patientDashboards } from '@/mock/patientDashboards'
 import { MockApiError } from '@/mock/patients'
 
@@ -89,6 +90,24 @@ mockForms.rt_daily_report = {
   items: RT_ITEMS.map((definition, i) => ({ display_order: i + 1, is_required: true, display_condition: null, definition })),
 }
 
+// 放射治療皮膚反應自我評估 (= backend/app/seeds/skin_self_assessment.py; wording pending clinical review):
+// the three reused rt_daily_report questions are the same definitions; every question optional
+const SKIN = { code: 'skin_self_assessment', name_zh: '皮膚狀況自我評估' }
+const rtItem = (code) => RT_ITEMS.find((d) => d.code === code)
+const SKIN_ITEMS = [
+  rtItem('rt_dermatitis_redness'),
+  rtItem('rt_dermatitis_desquamation'),
+  rtItem('rt_pain_skin'),
+  choice(110, 'skin_itch', '搔癢', SKIN, true, YES_NO),
+  choice(111, 'skin_broken_exudate', '破皮或有滲液', SKIN, true, YES_NO),
+  { ...choice(112, 'skin_assist_request', '需要護理師協助評估', SKIN, true, [['yes', '是', 1]]), question_text: '不確定自己的狀況，請護理師協助評估' },
+]
+mockForms.rt_skin_self_assessment = {
+  id: 3, code: 'rt_skin_self_assessment', name: '放射治療皮膚反應自我評估', description: null, intended_for: 'patient', availability: 'always',
+  recall_period_hours: null, version: 1,
+  items: SKIN_ITEMS.map((definition, i) => ({ display_order: i + 1, is_required: false, display_condition: null, definition })),
+}
+
 const rule = (code, name, definition, dflt, severity) => ({
   code, name, definition, severity,
   get threshold() { return threshold(code, dflt) }, // editable in the admin console (mock alert rules)
@@ -120,6 +139,7 @@ let nextId = 1000
 function submitMockDailyReport(patientId, body) {
   const form = mockForms.rt_daily_report
   const invalid = (details) => new MockApiError(400, 'VALIDATION_ERROR', '症狀回報內容有誤', details)
+  if (body.photos != null) throw invalid([{ field: 'photos', issue: 'this form does not take photos' }])
   const given = Object.fromEntries((body.values ?? []).map((v) => [v.definition_code, v]))
   const details = []
   const values = []
@@ -154,7 +174,7 @@ function submitMockDailyReport(patientId, body) {
     const scored = [...values].sort((a, b) => b.score - a.score)
     nv.pending_symptom_reviews.count += 1
     nv.pending_symptom_reviews.items.unshift({
-      id, recorded_at: now, cycle_day: cycleDay, max_score: scored[0]?.score ?? null,
+      id, recorded_at: now, cycle_day: cycleDay, max_score: scored[0]?.score ?? null, form: { code: form.code, name: form.name },
       summary: scored.map((v) => (v.option_label !== undefined ? `${v.label}：${v.option_label}` : `${v.label} ${v.score}`)).join('、'),
     })
     nv.last_report_at = now
@@ -163,7 +183,63 @@ function submitMockDailyReport(patientId, body) {
   }
   return {
     id, patient_id: patientId, form: { code: form.code, version: form.version }, recorded_at: now, cycle_day: cycleDay, source: 'patient_app',
-    review_status: 'submitted', record_status: 'final', amends_id: null, notes: null, values, triggered_alerts: [],
+    review_status: 'submitted', record_status: 'final', amends_id: null, notes: null, values, photos: [], triggered_alerts: [],
+  }
+}
+
+/**
+ * POST /symptoms/records for rt_skin_self_assessment (= create_symptom_record): every question optional
+ * but at least one answer, options / 0–10 validated, notes ≤ 2000, not once per day, no alert rule; the
+ * record reaches the nurse lists (with its form) and the ≥ 7 risk summary.
+ */
+function submitMockSkinReport(patientId, body) {
+  const form = mockForms.rt_skin_self_assessment
+  const invalid = (details) => new MockApiError(400, 'VALIDATION_ERROR', '症狀回報內容有誤', details)
+  if (!Array.isArray(body.values) || !body.values.length) throw invalid([{ field: 'values', issue: 'must be a non-empty list' }])
+  const order = form.items.map((i) => i.definition.code)
+  const details = []
+  const values = []
+  if (body.notes != null && (typeof body.notes !== 'string' || body.notes.length > 2000)) {
+    details.push({ field: 'notes', issue: 'must be a string of at most 2000 characters' })
+  }
+  for (const v of body.values) {
+    const def = form.items.find((i) => i.definition.code === v.definition_code)?.definition
+    if (!def) { details.push({ field: 'values', issue: `'${v.definition_code}' is not part of form '${form.code}'` }); continue }
+    if (def.value_type === 'scale') {
+      const n = v.value_numeric
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 10) { details.push({ field: `values.${def.code}.value_numeric`, issue: 'must be between 0 and 10' }); continue }
+      values.push({ definition_code: def.code, label: def.name_zh, value_numeric: n, score: n })
+    } else {
+      const opt = def.options.find((o) => o.value_code === v.option_code)
+      if (!opt) { details.push({ field: `values.${def.code}.option_code`, issue: 'is not a valid option' }); continue }
+      values.push({ definition_code: def.code, label: def.name_zh, option_code: opt.value_code, option_label: opt.label_zh, score: opt.score })
+    }
+  }
+  if (details.length) throw invalid(details)
+  values.sort((a, b) => order.indexOf(a.definition_code) - order.indexOf(b.definition_code))
+  const checkedPhotos = checkMockPhotos(patientId, body.photos) // before anything is created (one transaction)
+  const w = patientDashboards[patientId]?.widgets
+  const cycleDay = w?.['treatment-progress']?.current_cycle?.cycle_day ?? null
+  const now = nowIso()
+  const notes = body.notes?.trim() || null
+  const id = nextId++
+  const photos = attachMockPhotos(id, checkedPhotos)
+  addMockSymptomRecord(patientId, { id, recorded_at: now, cycle_day: cycleDay, form: { code: form.code, version: form.version }, notes, values: structuredClone(values), alerts: [], photos })
+  if (w) {
+    const nv = w['nurse-view']
+    const scored = [...values].sort((a, b) => b.score - a.score)
+    nv.pending_symptom_reviews.count += 1
+    nv.pending_symptom_reviews.items.unshift({
+      id, recorded_at: now, cycle_day: cycleDay, max_score: scored[0]?.score ?? null, form: { code: form.code, name: form.name },
+      summary: scored.map((v) => (v.option_label !== undefined ? `${v.label}：${v.option_label}` : `${v.label} ${v.score}`)).join('、'),
+    })
+    nv.last_report_at = now
+    nv.hours_since_last_report = 0
+    applyToRiskSummary(w, { symptoms: values.filter((v) => v.value_numeric !== undefined).map((v) => ({ label: v.label, score: v.score })), alerts: [], at: now })
+  }
+  return {
+    id, patient_id: patientId, form: { code: form.code, version: form.version }, recorded_at: now, cycle_day: cycleDay, source: 'patient_app',
+    review_status: 'submitted', record_status: 'final', amends_id: null, notes, values, photos, triggered_alerts: [],
   }
 }
 
@@ -202,6 +278,7 @@ export function mockDailyReportWidgets(patientId) {
 /** Apply a report to the in-memory mock dashboard so the UI updates like it would with the API. */
 export function submitMockReport(patientId, body) {
   if (body.form_code === 'rt_daily_report') return submitMockDailyReport(patientId, body)
+  if (body.form_code === 'rt_skin_self_assessment') return submitMockSkinReport(patientId, body)
   const dashboard = patientDashboards[patientId]
   if (!dashboard) throw new Error('找不到這位病人的示範資料')
   const w = dashboard.widgets
@@ -292,6 +369,7 @@ export function submitMockReport(patientId, body) {
     record_status: 'final',
     amends_id: null,
     values,
+    photos: [],
     triggered_alerts: triggered.map(({ _title, _nurseMessage, ...t }) => t),
   }
 }

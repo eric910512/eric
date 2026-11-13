@@ -10,6 +10,7 @@ import NurseNav from '@/components/NurseNav.vue'
 import NurseNotificationList from '@/components/NurseNotificationList.vue'
 import PatientSummary from '@/components/PatientSummary.vue'
 import PatientTimeline from '@/components/PatientTimeline.vue'
+import SkinPhotoHistory from '@/components/SkinPhotoHistory.vue'
 import SymptomReviewPanel from '@/components/SymptomReviewPanel.vue'
 import SymptomTrend from '@/components/SymptomTrend.vue'
 import TreatmentProgress from '@/components/TreatmentProgress.vue'
@@ -86,6 +87,11 @@ watch(selectedId, (id) => id && store.fetchPatientDashboard(id), { immediate: tr
           >
             <AppIcon name="chat" :size="20" /> 病人訊息
             <span v-if="chat.unread" class="rounded-full bg-critical px-2 text-sm font-bold text-white" :aria-label="`${chat.unread} 則未讀訊息`">{{ chat.unread }}</span>
+          </RouterLink>
+          <!-- phones: 追蹤管理 (Phase 1c) — the side navigation is hidden -->
+          <RouterLink :to="{ name: 'nurse-follow-ups' }" class="inline-flex min-h-11 items-center gap-2 rounded-full bg-mist px-4 py-2 font-bold text-ink-soft hover:text-ink lg:hidden"
+            data-follow-up-mobile-entry>
+            <AppIcon name="calendar" :size="20" /> 追蹤管理
           </RouterLink>
         </div>
 
@@ -225,6 +231,9 @@ watch(selectedId, (id) => id && store.fetchPatientDashboard(id), { immediate: tr
             <SymptomTrend :trend="patient.widgets['symptom-trend']" />
 
             <SymptomReviewPanel :patient-id="selectedId" :today="today" :timezone="TZ" />
+
+            <!-- 皮膚照片 (Phase 1b): the backend lists them only for a currently assigned patient -->
+            <SkinPhotoHistory :key="selectedId" :patient-id="selectedId" title="皮膚照片紀錄" />
 
             <PatientTimeline :patient-id="selectedId" audience="staff" :timezone="TZ" title="病人照護時間軸" />
           </template>

@@ -173,7 +173,7 @@ const personName = (p) => (p && typeof p === 'object' ? p.display_name : p)
                     <dl class="grid grid-cols-2 gap-2">
                       <div v-for="v in e.detail.values" :key="v.code" class="rounded-lg bg-mist px-2.5 py-1.5">
                         <dt class="text-sm text-ink-soft">{{ v.label }}</dt>
-                        <dd class="font-bold" :class="v.score >= 7 || v.value === '有' ? 'text-warn' : ''">{{ v.value }}<span v-if="v.score != null" class="text-sm font-normal text-ink-soft"> / 10</span></dd>
+                        <dd class="font-bold" :class="v.score >= 7 || (v.value === '有' && !v.option_code) ? 'text-warn' : ''">{{ v.value }}<span v-if="v.score != null" class="text-sm font-normal text-ink-soft"> / 10</span></dd>
                       </div>
                     </dl>
                     <p v-if="e.detail.notes" class="mt-2">備註：{{ e.detail.notes }}</p>

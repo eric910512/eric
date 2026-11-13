@@ -17,6 +17,7 @@ export const usePatientPortalStore = defineStore('patientPortal', {
     basic: null, // GET /patients/{id}/profile
     weights: null, // GET /patients/{id}/weights
     latestReports: {}, // form code → latest own record (or null)
+    formRecords: {}, // form code → own records of that form, newest first (e.g. the skin self-assessment history)
     loading: {},
     errors: {},
   }),
@@ -89,6 +90,15 @@ export const usePatientPortalStore = defineStore('patientPortal', {
           api.get(`/symptoms/records/${patientId}`, { params: { form_code: formCode, per_page: 1 } })))
       if (body) this.latestReports = { ...this.latestReports, [formCode]: body.data[0] ?? null }
       return body?.data[0] ?? null
+    },
+
+    /** Own reports of one form, newest first. */
+    async fetchFormRecords(patientId, formCode) {
+      const body = await this._load(`records:${formCode}`, () =>
+        call('mockListRecords', [patientId, { reviewStatus: 'all', formCode }], () =>
+          api.get(`/symptoms/records/${patientId}`, { params: { form_code: formCode, per_page: 50 } })))
+      if (body) this.formRecords = { ...this.formRecords, [formCode]: body.data }
+      return body?.data ?? null
     },
 
     async fetchBasic(patientId) {

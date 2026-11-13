@@ -73,6 +73,14 @@ class SymptomRecord(ObservationMixin, TimestampMixin, db.Model):
         passive_deletes=True,
     )
 
+    def ordered_values(self):
+        """The answers in the form's question order (``symptom_form_items.display_order``), never the
+        database's natural order. Answers to a question that is no longer on the form follow, by
+        definition id (then value id)."""
+        position = {i.definition_id: (i.display_order, i.id) for i in self.form.items} if self.form else {}
+        return sorted(self.values, key=lambda v: (0, *position[v.definition_id]) if v.definition_id in position
+                      else (1, v.definition_id or 0, v.id or 0))
+
     def __repr__(self):
         return (
             f"<SymptomRecord id={self.id} patient_id={self.patient_id} "

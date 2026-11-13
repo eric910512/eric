@@ -17,6 +17,7 @@ from app.extensions import db
 from app import models
 from app.models.base import utcnow
 from app.seeds.rt_daily_report import seed_rt_daily_report
+from app.seeds.skin_self_assessment import seed_skin_self_assessment
 from app.models import (
     AlertRule,
     LabResult,
@@ -357,6 +358,9 @@ def seed_dev_data(password: str = DEFAULT_DEMO_PASSWORD) -> dict:
 
     # 每日症狀與自我照護回報 (rt_daily_report): same rows as data migration f1a7c3d2b9e4
     seed_rt_daily_report(_upsert, track, models)
+    # 放射治療皮膚反應自我評估 (rt_skin_self_assessment, reuses three rt_daily_report questions): same rows as
+    # data migration c3e9a1f4b7d2
+    seed_skin_self_assessment(_upsert, track, models)
 
     # Phase 1 alert rules for symptom reports (database-design.md §6.K)
     for code, name, definition_code, op, threshold, severity, cooldown, template in [

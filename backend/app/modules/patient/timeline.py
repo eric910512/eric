@@ -267,21 +267,30 @@ def _symptoms(ctx):
     ).scalars().all()
     events = []
     for r in rows:
-        values, parts, fever, top = [], [], False, 0
-        for v in r.values:
+        values, parts, fever, top, ranked = [], [], False, 0, []
+        for v in r.ordered_values():
             d = v.definition
+            score = float(v.score) if v.score is not None else None
             if d.value_type == SymptomValueType.BOOLEAN:
                 fever = fever or bool(v.value_boolean)
                 values.append({"code": d.code, "label": d.name_zh, "value": "有" if v.value_boolean else "沒有"})
                 if v.value_boolean:
                     parts.append(d.name_zh)
+            elif d.value_type == SymptomValueType.SINGLE_CHOICE:
+                # the chosen option's own text (深紅 / 有 / 是), never its internal score; no "/ 10"
+                label = v.option.label_zh if v.option else None
+                values.append({"code": d.code, "label": d.name_zh, "value": label, "option_code": v.option.value_code if v.option else None})
+                if score is not None:
+                    top = max(top, score)
+                    ranked.append((score, f"{d.name_zh}：{label}"))
             else:
-                score = float(v.score) if v.score is not None else None
                 values.append({"code": d.code, "label": d.name_zh, "value": f"{score:g}" if score is not None else None, "score": score})
                 if score is not None:
                     top = max(top, score)
-        scored = sorted((x for x in values if x.get("score") is not None), key=lambda x: -x["score"])
-        summary = "、".join([f"{x['label']} {x['value']}" for x in scored[:3]] + parts) or "已回報"
+                    ranked.append((score, f"{d.name_zh} {score:g}"))
+        # highest three (0–10 scores and option scores, as before); stable, so ties keep question order
+        ranked.sort(key=lambda x: -x[0])
+        summary = "、".join([text for _, text in ranked[:3]] + parts) or "已回報"
         detail = {"values": values, "notes": r.notes, "reviewed": r.review_status == "reviewed"}
         if ctx.staff:
             detail.update({"review_status": r.review_status, "reviewed_by": _person(r.reviewer), "reviewed_at": iso_utc(r.reviewed_at),
@@ -486,6 +495,12 @@ def _assessments(ctx):
         .limit(ctx.params.limit + 1)
     ).scalars().all()
     events = []
+    completions = {}  # staff: assessment id → the care follow-up it closed (Phase 1c)
+    if ctx.staff and rows:
+        from app.models import CareFollowUp
+
+        completions = dict(db.session.execute(select(CareFollowUp.completion_assessment_id, CareFollowUp.public_id).where(
+            CareFollowUp.completion_assessment_id.in_([a.id for a in rows]))).all())
     for a in rows:
         type_text = ASSESSMENT_TYPE_TEXT.get(a.assessment_type, "護理評估")
         if ctx.staff:
@@ -499,7 +514,9 @@ def _assessments(ctx):
                 "next_follow_up_at": iso_utc(a.next_follow_up_at),
             }
             severity = RISK_TO_SEVERITY.get(a.risk_level)
-            title = f"護理評估（{type_text}）" + ("・草稿" if a.sign_status == SignStatus.DRAFT else "")
+            title = f"護理評估（{type_text}）" + ("・草稿" if a.sign_status == SignStatus.DRAFT else "") + ("・追蹤結案" if a.id in completions else "")
+            if a.id in completions:
+                detail["care_follow_up_id"] = completions[a.id]
         else:
             summary = "護理師已追蹤您的狀況。" if a.assessment_type == "phone_follow_up" else "護理師已完成評估。"
             detail = {"assessment_type": a.assessment_type, "assessment_type_text": type_text}

@@ -1,13 +1,13 @@
 """Symptom forms and reports (api-design.md §6)."""
 
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func, select
 
 from app.core.api import APIError
-from app.core.timeutil import iso_utc, local_day_bounds_utc, parse_observed_at, patient_zone, to_local
+from app.core.timeutil import iso_utc, local_day_bounds_utc, parse_observed_at, patient_zone, to_local, to_ms
 from app.extensions import db
 from app.models import Notification, NursingAssessment, SymptomForm, SymptomRecord, SymptomRecordValue
 from app.models.base import utcnow
@@ -22,6 +22,7 @@ from app.models.enums import (
     SymptomValueType,
 )
 from app.services.alert_engine import evaluate_symptom_record, replay_symptom_record
+from app.modules.photo.services import attach_photos, parse_photo_specs, record_photos
 from app.modules.notification.services import resolve_source_alerts
 from app.services.treatment import active_plan_and_cycle, cycle_nadir
 
@@ -260,6 +261,11 @@ def create_symptom_record(patient, user, body, correction_of=None):
         # a correction may concern a report made before a question became required
         if form_item.is_required and code not in seen and correction_of is None:
             errors.add("values", f"'{code}' is required")
+    photo_specs = []
+    if correction_of is None:
+        photo_specs = parse_photo_specs(body, form, errors)  # 皮膚照片: attached below, same transaction
+    elif body.get("photos") is not None:
+        errors.add("photos", "a correction keeps the photos of the original report")
     errors.raise_if_any()
     if form.code in ONCE_PER_DAY_FORMS and correction_of is None:
         _ensure_not_reported_today(patient, form, recorded_at)
@@ -296,6 +302,7 @@ def create_symptom_record(patient, user, body, correction_of=None):
         record.values.append(value)
     db.session.add(record)
     db.session.flush()
+    attach_photos(record, patient, user, photo_specs)
 
     triggered = evaluate_symptom_record(record, patient, **_alert_context(record, patient))
     return record, triggered
@@ -386,7 +393,8 @@ def serialize_record(record, triggered_alerts):
         "record_status": record.record_status,
         "amends_id": record.amends_id,  # Sprint 5: set on a corrected version
         "notes": record.notes,
-        "values": [serialize_value(v) for v in record.values],
+        "values": [serialize_value(v) for v in record.ordered_values()],
+        "photos": record_photos(record),  # 皮膚照片: metadata only, images via GET /symptom-photos/{id}/content
         "triggered_alerts": triggered_alerts,
     }
 
@@ -395,6 +403,22 @@ def serialize_record(record, triggered_alerts):
 
 REVIEW_ASSESSMENT_TYPES = ("phone_follow_up", "follow_up")
 MAX_ACTION_NOTE = 2000
+MAX_FOLLOW_UP_AHEAD = timedelta(days=180)
+# review_status filter of the records list: "follow_up" = 需追蹤, a subset of reviewed:
+# - an open care follow-up (Phase 1c care_follow_ups), or
+# - a Phase 1a review that planned a date (nursing_assessments.next_follow_up_at) and has no care follow-up
+#   at all yet — such dates are never converted in bulk; they stay visible until a nurse creates the
+#   follow-up item for them (a completed / cancelled item then decides, as for any other record).
+FOLLOW_UP = "follow_up"
+
+
+def _follow_up_filter():
+    from sqlalchemy import and_, or_
+
+    from app.modules.follow_up.services import any_follow_up_exists, open_follow_up_exists
+
+    legacy = and_(SymptomRecord.nursing_assessment.has(NursingAssessment.next_follow_up_at.is_not(None)), ~any_follow_up_exists())
+    return or_(open_follow_up_exists(), legacy)
 
 
 def list_patient_records(patient, *, review_status, page, per_page, form_code=None):
@@ -402,10 +426,12 @@ def list_patient_records(patient, *, review_status, page, per_page, form_code=No
     if form_code:
         base.append(SymptomRecord.form.has(SymptomForm.code == form_code))
     filters = list(base)
-    if review_status != "all":
+    if review_status == FOLLOW_UP:
+        filters += [SymptomRecord.review_status == ReviewStatus.REVIEWED, _follow_up_filter()]
+    elif review_status != "all":
         filters.append(SymptomRecord.review_status == review_status)
     total = db.session.execute(select(func.count()).select_from(SymptomRecord).where(*filters)).scalar()
-    order = (SymptomRecord.reviewed_at.desc(),) if review_status == ReviewStatus.REVIEWED else ()
+    order = (SymptomRecord.reviewed_at.desc(),) if review_status in (ReviewStatus.REVIEWED, FOLLOW_UP) else ()
     records = db.session.execute(
         select(SymptomRecord).where(*filters)
         .order_by(*order, SymptomRecord.recorded_at.desc(), SymptomRecord.id.desc())
@@ -422,6 +448,10 @@ def list_patient_records(patient, *, review_status, page, per_page, form_code=No
         "total": total,
         "submitted": counts.get(ReviewStatus.SUBMITTED, 0),
         "reviewed": counts.get(ReviewStatus.REVIEWED, 0),
+        "follow_up": db.session.execute(
+            select(func.count()).select_from(SymptomRecord)
+            .where(*base, SymptomRecord.review_status == ReviewStatus.REVIEWED, _follow_up_filter())
+        ).scalar(),
     }
     return records, meta
 
@@ -482,15 +512,21 @@ def record_list_payload(record, *, viewer_role):
             "assessment_type": assessment.assessment_type,
             "action_note": assessment.plan,
             "risk_level": assessment.risk_level,
+            "next_follow_up_at": iso_utc(assessment.next_follow_up_at),  # set → 需追蹤
         }
         if assessment and viewer_role != RoleName.PATIENT else None
     )
+    if viewer_role != RoleName.PATIENT:  # nurse work item (Phase 1c); patients see their follow-ups on their own page
+        from app.modules.follow_up.services import legacy_follow_up_at, record_summary
+
+        data["follow_up"] = record_summary(record)
+        data["legacy_follow_up_at"] = legacy_follow_up_at(record)  # Phase 1a date without a follow-up item
     return data
 
 
 def _summary(record, zone):
     parts = []
-    for v in record.values:
+    for v in record.ordered_values():
         if v.definition.value_type == SymptomValueType.BOOLEAN:
             if v.value_boolean:
                 parts.append(f"有{v.definition.name_zh}")
@@ -501,6 +537,30 @@ def _summary(record, zone):
             parts.append(f"{v.definition.name_zh} {float(v.score):g}")
     when = to_local(record.recorded_at, zone).strftime("%m/%d %H:%M")
     return f"病人回報（{when}）：" + ("、".join(parts) or "無")
+
+
+def _parse_follow_up(body, errors):
+    """Optional ``next_follow_up_at`` of a review (ISO 8601 with timezone): from the start of today
+    (UTC) up to 180 days ahead. Set → the record is 需追蹤 (nurse view only)."""
+    raw = body.get("next_follow_up_at")
+    if raw is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00")) if isinstance(raw, str) else None
+    except ValueError:
+        parsed = None
+    if parsed is None or parsed.tzinfo is None:
+        errors.add("next_follow_up_at", "must be an ISO 8601 datetime with timezone")
+        return None
+    value = to_ms(parsed.astimezone(timezone.utc).replace(tzinfo=None))
+    now = utcnow()
+    if value < now.replace(hour=0, minute=0, second=0, microsecond=0):
+        errors.add("next_follow_up_at", "cannot be in the past")
+    elif value > now + MAX_FOLLOW_UP_AHEAD:
+        errors.add("next_follow_up_at", "cannot be more than 180 days ahead")
+    else:
+        return value
+    return None
 
 
 def review_record(record, nurse, body):
@@ -522,6 +582,23 @@ def review_record(record, nurse, body):
     resolve_alerts = body.get("resolve_alerts", True)
     if not isinstance(resolve_alerts, bool):
         errors.add("resolve_alerts", "must be true or false")
+    # 追蹤 (Phase 1c): ``follow_up: {due_at, reason}`` creates a care follow-up with the review (one
+    # transaction). The Phase 1a ``next_follow_up_at`` still works: its reason is the review's action note.
+    follow_up_reason = None
+    if body.get("follow_up") is not None:
+        from app.modules.follow_up.services import MAX_REASON, parse_due_at, text_field
+
+        spec = body["follow_up"]
+        if not isinstance(spec, dict):
+            errors.add("follow_up", "must be an object {due_at, reason}")
+            next_follow_up_at = None
+        else:
+            next_follow_up_at = parse_due_at(spec.get("due_at"), record.patient, errors, "follow_up.due_at")
+            follow_up_reason = text_field(spec, "reason", errors, MAX_REASON)
+    else:
+        next_follow_up_at = _parse_follow_up(body, errors)
+        if next_follow_up_at is not None and isinstance(note, str):
+            follow_up_reason = note.strip()[:1000]
     grades = body.get("ctcae_grades", [])
     values_by_code = {v.definition.code: v for v in record.values}
     parsed_grades = []
@@ -562,6 +639,7 @@ def review_record(record, nurse, body):
         subjective=_summary(record, zone),
         assessment="症狀回報審閱" + (f"（CTCAE：{grade_text}）" if grade_text else ""),
         plan=note,
+        next_follow_up_at=next_follow_up_at,
         sign_status=SignStatus.SIGNED,
         signed_at=now,
         cycle=cycle,
@@ -578,6 +656,10 @@ def review_record(record, nurse, body):
     record.reviewed_by = nurse.id
     record.reviewed_at = now
     record.nursing_assessment_id = assessment.id
+    if next_follow_up_at is not None:
+        from app.modules.follow_up.services import create_follow_up
+
+        create_follow_up(record, nurse, next_follow_up_at, follow_up_reason, assessment)
 
     resolved = resolve_source_alerts("symptom_records", record.id, nurse, note) if resolve_alerts else []
     return assessment, [v.definition.code for v, _ in parsed_grades], resolved

@@ -73,6 +73,9 @@ TRENDABLE_TYPES = (
 # self-care stamp cards. Self-care answers are 有／沒有, not scores, so they stay off the trend chart.
 DAILY_REPORT_FORM = "rt_daily_report"
 SELF_CARE_CATEGORY = "daily_self_care"
+# 放射治療皮膚反應自我評估 (app/seeds/skin_self_assessment.py): its own yes / no questions are not score
+# lines either (the reused rt_daily_report questions keep their category and stay in the chart)
+SKIN_SELF_CATEGORY = "skin_self_assessment"
 # radiotherapy sessions that never happen (the reschedule's new appointment is counted instead)
 RADIATION_NOT_COUNTED = (AppointmentStatus.CANCELLED, AppointmentStatus.RESCHEDULED)
 FLAG_RANK = {None: 0, "warning": 1, "critical": 2}
@@ -377,6 +380,8 @@ def symptom_trend_widget(ctx, days):
             continue
         if definition.category is not None and definition.category.code == SELF_CARE_CATEGORY:
             continue  # 有／沒有 answers: shown as stamp cards (self-care-stamps), not as a score line
+        if definition.category is not None and definition.category.code == SKIN_SELF_CATEGORY:
+            continue  # skin self-assessment 有／沒有 answers: shown in the report, not as a score line
         series.append({
             "key": definition.code,
             "label": definition.name_zh,
@@ -733,6 +738,7 @@ def _pending_review_item(record):
             f"{v.definition.name_zh}：{v.option.label_zh}" if v.definition.value_type == SymptomValueType.SINGLE_CHOICE and v.option
             else f"{v.definition.name_zh} {float(v.score):g}" for v in values),
         "max_score": float(values[0].score) if values else None,
+        "form": {"code": record.form.code, "name": record.form.name} if record.form else None,
     }
 
 

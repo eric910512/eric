@@ -7,6 +7,8 @@ Flask-Migrate / ``db.create_all()`` can see all tables.
 from app.models.audit import AuditLog, IdempotencyRecord
 from app.models.auth import AuthToken
 from app.models.chat import ChatMessage, ChatReadState
+from app.models.photo import PatientConsent, SymptomPhoto, SymptomPhotoBlob
+from app.models.follow_up import CareFollowUp, CareFollowUpEvent
 from app.models.chemotherapy import (
     ChemoRegimen,
     ChemotherapyCycle,
@@ -48,6 +50,11 @@ __all__ = [
     "CancerType",
     "ChatMessage",
     "ChatReadState",
+    "PatientConsent",
+    "SymptomPhoto",
+    "SymptomPhotoBlob",
+    "CareFollowUp",
+    "CareFollowUpEvent",
     "ChemoRegimen",
     "ChemotherapyCycle",
     "ChemotherapyPlan",

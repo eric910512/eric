@@ -413,3 +413,36 @@ class ChatMessageKind:
     TEXT = "text"
     AUTO_REPLY = "auto_reply"
     ALL = (TEXT, AUTO_REPLY)
+
+
+class PhotoStatus:
+    PENDING = "pending"  # uploaded, not yet part of a symptom record (only its uploader sees it)
+    ATTACHED = "attached"  # part of a symptom record: kept (retention policy pending the hospital)
+    DISCARDED = "discarded"  # never attached: image removed from storage, metadata kept
+    ALL = (PENDING, ATTACHED, DISCARDED)
+
+
+class PhotoDeleteReason:
+    REMOVED_BEFORE_SUBMIT = "removed_before_submit"  # the patient removed it before sending the report
+    EXPIRED_UNATTACHED = "expired_unattached"  # clean-up: still pending after PHOTO_PENDING_TTL
+    ALL = (REMOVED_BEFORE_SUBMIT, EXPIRED_UNATTACHED)
+
+
+class ConsentType:
+    SKIN_PHOTO = "skin_photo"
+    ALL = (SKIN_PHOTO,)
+
+
+class FollowUpStatus:
+    OPEN = "open"  # 待追蹤 (overdue = open and due_at in the past: computed, never stored)
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    ALL = (OPEN, COMPLETED, CANCELLED)
+
+
+class FollowUpEventType:
+    CREATED = "created"
+    RESCHEDULED = "rescheduled"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    ALL = (CREATED, RESCHEDULED, COMPLETED, CANCELLED)

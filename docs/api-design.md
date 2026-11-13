@@ -859,6 +859,14 @@ Response `201`
 
 > **實作說明（隱私）**：`GET /api/v1/symptoms/records/{pid|me}` 對病人只回傳「已審閱」與時間，不含護理師的處置說明、風險判斷、審閱者或處理者姓名；護理師代為輸入的紀錄，`reported_by` 對病人也不顯示。
 
+> **實作說明（皮膚自我評估 Phase 1a，2026-11）**：審閱可另帶選填的 `next_follow_up_at`（ISO 8601 含時區，今天起 180 天內），存在該次審閱的護理評估（既有欄位），代表「需追蹤」；不合法回 400，審閱不會成立。`GET /symptoms/records/{pid}` 的 `review_status` 多一個值 `follow_up`（= 已審閱且有追蹤日期，僅限醫護人員；病人使用回 403），`meta` 多 `follow_up` 計數（病人的回應不含此欄），`review` 多 `next_follow_up_at`（病人仍為 `null`）。`pending-symptom-reviews` 與 nurse-view 的待審項目多 `form: {code, name}`。皮膚自評表單（`rt_skin_self_assessment`）不提供 CTCAE 分級欄位（標準待院方確認），也沒有任何警示規則；見 `docs/skin-self-assessment-clinical-review.md`。
+>
+> **實作說明（護理師追蹤 Phase 1c，2026-11）**：`GET/POST /care-follow-ups`、`GET /care-follow-ups/{id}`、`GET …/{id}/events`、`PATCH …/{id}/reschedule`、`POST …/{id}/complete`、`POST …/{id}/cancel`（護理師；寫入必須帶 Idempotency-Key 與 `version`；409 `VERSION_CONFLICT` / `FOLLOW_UP_CLOSED` / `FOLLOW_UP_EXISTS` / `RECORD_NOT_REVIEWED`）、`GET /patients/me/care-follow-ups`（病人唯讀）。審閱 API 新增 `follow_up: {due_at, reason}`（與審閱同一交易）；症狀紀錄清單（護理師）多 `follow_up` 摘要，`review_status=follow_up` = 有進行中的追蹤。詳見 `docs/skin-follow-up-implementation.md`。
+>
+> **實作說明（皮膚照片 Phase 1b，2026-11）**：`GET /symptom-photos/settings`（病人／護理師；病人另含版本化同意書）、`POST /patients/me/photo-consent` `{version}`、`POST /patients/me/photo-consent/revoke`、`POST /patients/{id|me}/symptom-photos`（病人，multipart 欄位 `file`，Idempotency-Key 必填 → 201 pending；同一張仍在 pending → 200 同一張）、`DELETE /symptom-photos/{id}`（只限自己未送出的照片；已送出 → 409 `PHOTO_RETAINED`）、`GET /patients/{id|me}/symptom-photos?body_site=&from=&to=`（已送出照片，新到舊，含所屬回報的時間／答案；病人本人與目前配對護理師）、`GET /symptom-photos/{id}/content?variant=thumb|full`（JPEG，`Cache-Control: private, no-store`、`nosniff`、`CSP sandbox`；每次都檢查權限並寫稽核）。`POST /symptoms/records` 新增選填 `photos: [{id, body_site?}]`（僅皮膚自評表單，最多 3 張；與回報同一交易）；症狀紀錄回應多 `photos`（metadata，無網址）。管理者 403。功能關閉時上傳 503 `PHOTO_UPLOADS_DISABLED`。詳見 `docs/skin-photo-deployment.md`。
+>
+> **實作說明（答案順序與時間軸文字，2026-11）**：症狀紀錄的 `values`（POST / GET 清單 / 審閱 / 更正歷程，以及審閱摘要與時間軸）一律依表單題目順序（`symptom_form_items.display_order`）排列，不依資料庫自然順序；回應結構不變。時間軸的單選題顯示選項文字（`深紅`、`有`、`是`），`detail.values` 該項帶 `option_code`、不帶 `score`（前端因此不加「/ 10」）；0–10 題與布林題（發燒或畏寒）的顯示不變。
+
 Request
 ```json
 {
