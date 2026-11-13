@@ -16,6 +16,7 @@ Attached photos are part of the care record: nothing here deletes them (retentio
 hospital). No photo is ever analysed or graded automatically.
 """
 
+import threading
 from datetime import timedelta
 
 from flask import current_app
@@ -206,13 +207,32 @@ def _check_rate(user, patient):
         raise APIError(429, "RATE_LIMITED", "上傳照片的次數太多，請稍後再試")
 
 
+_processing_slots = None
+_processing_slots_lock = threading.Lock()
+
+
+def _slots():
+    """Per process: at most PHOTO_MAX_CONCURRENT_PROCESSING images decoded at once (memory on small instances)."""
+    global _processing_slots
+    with _processing_slots_lock:
+        if _processing_slots is None:
+            _processing_slots = threading.BoundedSemaphore(max(1, int(_cfg("PHOTO_MAX_CONCURRENT_PROCESSING"))))
+        return _processing_slots
+
+
 def prepare_upload(data, declared_type):
-    """Validate + re-encode (no database / storage work). Raises APIError for a rejected image."""
+    """Validate + re-encode (no database / storage work). Raises APIError for a rejected image. Runs before the
+    Idempotency-Key is recorded, so a 503 here is not replayed: a retry with the same or a new key works."""
+    slots = _slots()
+    if not slots.acquire(timeout=_cfg("PHOTO_PROCESSING_WAIT_SECONDS")):
+        raise APIError(503, "PHOTO_STORAGE_UNAVAILABLE", "目前處理照片的人數較多，請稍後再試")
     try:
         return process(data, declared_type, max_bytes=_cfg("PHOTO_MAX_UPLOAD_BYTES"), max_pixels=_cfg("PHOTO_MAX_PIXELS"),
                        min_side=_cfg("PHOTO_MIN_SIDE"), full_side=_cfg("PHOTO_FULL_MAX_SIDE"), thumb_side=_cfg("PHOTO_THUMB_MAX_SIDE"))
     except ImageRejected as exc:
         raise APIError(exc.status, exc.code, exc.message) from None
+    finally:
+        slots.release()
 
 
 def create_pending_photo(patient, user, image, stored_keys):

@@ -17,6 +17,7 @@ API 啟動時判斷一次，任一條件不符就**關閉上傳**，不會改用
 | 2c | `PHOTO_STORAGE_BACKEND=database` 需要有效的 `PHOTO_DB_QUOTA_BYTES`（以及合理的警示百分比）| `photo_quota_not_configured` | 關閉 |
 | 2d | `database` 在 staging／production 必須是 PostgreSQL | `database_storage_requires_postgresql` | 關閉 |
 | 3 | staging／production：`PHOTO_CONSENT_APPROVED_VERSION` 必須等於程式中的同意書版本（`app/modules/photo/consent.py` 的 `CONSENT_VERSION`）| `consent_not_approved` | 上傳關閉；已存照片仍可讀取 |
+| 4 | **production** 另外要求同意書已核准：`consent.py` 的 `REVIEW_STATUS = "approved"`，且版本字串不含 `draft`（staging 不檢查這一項，只能用合成資料）| `consent_not_approved` | 上傳關閉；已存照片仍可讀取 |
 
 - 預設值：base／staging／production `PHOTO_UPLOADS_ENABLED=false`、沒有儲存後端 → **目前 Render（staging）部署後照片功能是關閉的**，病人頁顯示「照片上傳目前未開放」，文字自評照常。
 - development／testing 預設開啟，使用 `LocalPrivateStorage`（私有暫存目錄；開發預設 `backend/instance/private-photos`，已被 `.gitignore` 排除；E2E 用 `frontend/e2e/.artifacts/private-photos`；後端測試用系統暫存目錄）。
@@ -224,3 +225,18 @@ python tests/object_storage/photo_object_storage_check.py
   - 跨程序讀取；並行配額（含對照組）；200 MiB 配額；
   - `pg_dump`／`pg_restore`；降級保護。
 - E2E：以 `PHOTO_STORAGE_BACKEND=database PHOTO_DB_QUOTA_BYTES=209715200` 執行 `skin-photo` 等照片相關 suite（只用環境變數，不改 `run.mjs`）。
+
+### 8.5 記憶體上限（Render Free 512 MB，2026-11-13）
+- **像素上限 `PHOTO_MAX_PIXELS = 2048 × 2048`**（`app/config.py`）。App 在手機上把每張照片縮到最長邊 2048 px（`frontend/src/utils/imagePrep.js`），所以正常上傳不會超過；後端在**解碼前**從檔頭檢查，JPEG／PNG／WebP 都適用（`Image.open` 只讀檔頭：8000 × 8000、2 KB 的 WebP 開檔只多用約 4 MB）。
+- **每個程序同時只解碼一張**（`PHOTO_MAX_CONCURRENT_PROCESSING = 1`）；其他上傳最多等 `PHOTO_PROCESSING_WAIT_SECONDS = 15` 秒，逾時回 `503 PHOTO_STORAGE_UNAVAILABLE`（尚未記錄 Idempotency-Key、沒有儲存任何東西；前端換新 key 重試）。處理一張 2048² 圖片約零點幾秒。
+- 量測（`backend/tests/predeploy/photo_memory_check.py`，Windows 本機，合成圖片；每個情境獨立程序）：
+
+  | 情境 | 修正前（40 MP 上限、不限同時處理） | 修正後 |
+  |---|---|---|
+  | 一張最大允許的 WebP | +631 MB（40 MP） | +43 MB（2048²） |
+  | 一張最大允許的 JPEG | +360 MB（40 MP） | +31 MB |
+  | 同一 worker 同時 4 張 2048² WebP | +247 MB | +43 MB |
+  | 高像素壓縮炸彈（JPEG／WebP 8000²） | 解碼 | 檔頭拒絕，+0 MB |
+
+  推估最壞情況：2 workers ×（閒置約 109 MB + 43 MB）+ master 約 30 MB ≈ **334 MB**，低於 512 MB 的 80%。Linux 上的實際數字以 Render Metrics 為準。
+- 不需要調整 `WEB_CONCURRENCY`／`GUNICORN_THREADS`。

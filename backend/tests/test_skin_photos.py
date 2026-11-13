@@ -74,7 +74,7 @@ def H(t, key=None):
 
 
 # ---------------------------------------------------------------- synthetic images
-def jpeg(size=(3000, 2000), color=(200, 120, 110), exif=None, quality=90):
+def jpeg(size=(2048, 1365), color=(200, 120, 110), exif=None, quality=90):
     buf = io.BytesIO()
     Image.new("RGB", size, color).save(buf, "JPEG", quality=quality, **({"exif": exif} if exif is not None else {}))
     return buf.getvalue()
@@ -195,7 +195,7 @@ with app.app_context():
     key = str(uuid.uuid4())
     r, body = upload(pt, original, key=key, name="../../etc/IMG_0001.jpg")
     photo1 = body.get("data", {})
-    check("upload JPEG 3000×2000 → 201 pending, resized to ≤ 1600 px", r.status_code == 201 and photo1["status"] == "pending"
+    check("upload JPEG 2048×1365 (as the app resizes it) → 201 pending, resized to ≤ 1600 px", r.status_code == 201 and photo1["status"] == "pending"
           and max(photo1["width"], photo1["height"]) == 1600 and photo1["content_type"] == "image/jpeg", body)
     row1 = db.session.query(SymptomPhoto).filter_by(public_id=photo1["id"]).one()
     check("random, unpredictable ids; storage key never derived from the file name", uuid.UUID(photo1["id"]).version == 4
@@ -264,6 +264,76 @@ with app.app_context():
     r = c.post("/api/v1/patients/me/symptom-photos", data={}, headers=H(pt), content_type="multipart/form-data")
     check("rejected: no file → 400", r.status_code == 400)
     check("…no row and no stored file from any rejected upload", db.session.query(SymptomPhoto).count() == rows_before and stored_count() == files_before)
+
+    # ================================================================ memory: pixel limit (every format) and one decode at a time
+    check("pixel limit = 2048 × 2048 (what the app's resize produces), one image decoded at a time per process",
+          app.config["PHOTO_MAX_PIXELS"] == 2048 * 2048 and app.config["PHOTO_MAX_CONCURRENT_PROCESSING"] == 1)
+
+    def solid(fmt, size, **kw):
+        buf = io.BytesIO()
+        Image.new("RGB", size, (90, 140, 60)).save(buf, fmt, **kw)
+        return buf.getvalue()
+
+    over = [("JPEG", "image/jpeg", solid("JPEG", (2049, 2048), quality=80)), ("PNG", "image/png", solid("PNG", (2049, 2048))),
+            ("WebP", "image/webp", solid("WEBP", (2049, 2048), quality=60))]
+    bombs = [("JPEG", "image/jpeg", solid("JPEG", (6000, 6000), quality=30)), ("WebP", "image/webp", solid("WEBP", (6000, 6000), lossless=True))]
+    for label, ctype, data in over:
+        r, _ = upload(pt, data, ctype=ctype)
+        check(f"rejected: {label} 2049×2048 (one pixel column over the limit) → 413 PHOTO_TOO_MANY_PIXELS", r.status_code == 413
+              and code(r) == "PHOTO_TOO_MANY_PIXELS", (r.status_code, code(r)))
+    for label, ctype, data in bombs:
+        r, _ = upload(pt, data, ctype=ctype)
+        check(f"rejected: {label} 6000×6000 in {len(data) // 1024} KB (compressed bomb) → 413 before decoding", r.status_code == 413
+              and code(r) == "PHOTO_TOO_MANY_PIXELS" and len(data) < 1024 * 1024, (r.status_code, code(r)))
+    check("…no row and no stored file from the oversized images", db.session.query(SymptomPhoto).count() == rows_before and stored_count() == files_before)
+    for label, ctype, data in [("JPEG", "image/jpeg", solid("JPEG", (2048, 2048), quality=80)), ("PNG", "image/png", solid("PNG", (2048, 2048))),
+                               ("WebP", "image/webp", solid("WEBP", (2048, 2048), quality=60))]:
+        image = photo_services.prepare_upload(data, ctype)
+        check(f"{label} exactly 2048×2048 (the limit) → accepted, re-encoded to ≤ 1600 px", max(image.width, image.height) == 1600)
+
+    import threading
+    import time
+    real_process, active, peak = photo_services.process, [0], [0]
+    gate = threading.Lock()
+
+    def counting_process(*a, **kw):
+        with gate:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.05)
+        try:
+            return real_process(*a, **kw)
+        finally:
+            with gate:
+                active[0] -= 1
+
+    photo_services.process = counting_process
+    sample = jpeg(size=(800, 600))
+
+    def work():
+        with app.app_context():
+            photo_services.prepare_upload(sample, "image/jpeg")
+
+    threads = [threading.Thread(target=work) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    photo_services.process = real_process
+    check("6 uploads processed concurrently in one process → never more than 1 image decoded at a time", peak[0] == 1, peak[0])
+
+    slots = photo_services._slots()
+    slots.acquire()  # simulate a long decode in another thread
+    wait_before = app.config["PHOTO_PROCESSING_WAIT_SECONDS"]
+    app.config["PHOTO_PROCESSING_WAIT_SECONDS"] = 0.2
+    try:
+        r, _ = upload(pt, jpeg(size=(800, 600), color=(1, 2, 3)))
+    finally:
+        app.config["PHOTO_PROCESSING_WAIT_SECONDS"] = wait_before
+        slots.release()
+    check("decoding slot busy longer than the wait → 503 PHOTO_STORAGE_UNAVAILABLE (retryable), nothing stored",
+          r.status_code == 503 and code(r) == "PHOTO_STORAGE_UNAVAILABLE"
+          and db.session.query(SymptomPhoto).count() == rows_before and stored_count() == files_before, (r.status_code, code(r)))
     r, _ = upload(nt, jpeg(), pid=pid)
     check("nurse cannot upload → 403", r.status_code == 403)
     r, _ = upload(pt, jpeg(), pid=p2.public_id)

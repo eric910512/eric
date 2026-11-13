@@ -106,7 +106,7 @@ def child():
     def code(r):
         return (r.get_json(silent=True) or {}).get("error", {}).get("code")
 
-    def jpeg(color, size=(2400, 1800), gps=False):
+    def jpeg(color, size=(2048, 1536), gps=False):
         buf = io.BytesIO()
         kw = {}
         if gps:

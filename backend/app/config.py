@@ -159,7 +159,15 @@ class Config:
     PHOTO_DB_CRITICAL_PERCENT = _number("PHOTO_DB_CRITICAL_PERCENT", 85, int)
     PHOTO_DB_DISK_BYTES = _number("PHOTO_DB_DISK_BYTES", None, int)  # optional: the database disk size, for the report
     PHOTO_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
-    PHOTO_MAX_PIXELS = 40_000_000  # checked before decoding (decompression bombs)
+    # Pixel limit, checked from the header BEFORE decoding (decompression bombs; every format). The app resizes
+    # every photo to ≤ 2048 px on the phone (frontend/src/utils/imagePrep.js), so 2048 × 2048 is the most a real
+    # upload has. Memory: decoding costs ~16 bytes per pixel at peak (WebP), so 40 MP needed ~700 MB — more
+    # than a Render Free instance (512 MB). See docs/skin-photo-deployment.md §8.5.
+    PHOTO_MAX_PIXELS = 2048 * 2048
+    # Images decoded at the same time per process (gunicorn worker); other uploads wait up to
+    # PHOTO_PROCESSING_WAIT_SECONDS, then get 503 PHOTO_STORAGE_UNAVAILABLE (nothing stored; retry is safe).
+    PHOTO_MAX_CONCURRENT_PROCESSING = 1
+    PHOTO_PROCESSING_WAIT_SECONDS = 15
     PHOTO_MIN_SIDE = 64
     PHOTO_FULL_MAX_SIDE = 1600
     PHOTO_THUMB_MAX_SIDE = 320
