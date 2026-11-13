@@ -98,6 +98,10 @@ def consent_payload(patient):
 
 
 def accept_consent(patient, user, version):
+    # photos off → no consent can be recorded (it would be an acceptance of a text nobody can act on yet, and
+    # would carry over when uploads are switched on). Revoking stays possible at any time (revoke_consent).
+    if not feature().upload_enabled:
+        raise APIError(503, "PHOTO_UPLOADS_DISABLED", "照片上傳功能目前未開放")
     if version != consent_text.CONSENT_VERSION:
         raise APIError(409, "CONSENT_VERSION_MISMATCH", "同意內容已更新，請重新閱讀後再同意", [
             {"field": "version", "issue": f"current version is {consent_text.CONSENT_VERSION}"}])

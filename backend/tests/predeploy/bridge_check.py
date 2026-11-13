@@ -5,7 +5,8 @@ Modes (MODE env):
   bridge-upgrade  BACKEND = bridge code. DB at b5cd01c11e1d (built by the deployed code): snapshot protected data,
                   run the bridge's migrations, prove the data is unchanged (also: no seed ran — users rows incl.
                   password hashes identical), new tables / constraints exist, old features work.
-  full-writes     BACKEND = full release (feature/skin-follow-up). Writes Phase 1a / 1b / 1c data (skin report, consent, review with
+  full-writes     BACKEND = full release (feature/skin-follow-up). Writes Phase 1a / 1b / 1c data (skin report, consent — the API refuses it
+                  while photos are off, so a SYNTHETIC row is written directly —, review with
                   follow-up, completion + next follow-up) and saves a fingerprint of all new-feature rows to SNAP.
   bridge-serve    BACKEND = bridge code, after the full release ran: old features still served (patient + nurse),
                   and the new-feature rows are byte-for-byte what the full release left (nothing deleted / rewritten).
@@ -129,8 +130,27 @@ with app.app_context(), warnings.catch_warnings():
 
     elif MODE == "full-writes":
         t1, n1 = token("trpt001@demo.local"), token("trnu001@demo.local")
-        r = c.post("/api/v1/patients/me/photo-consent", json={"version": c.get("/api/v1/symptom-photos/settings", headers=H(t1)).get_json()["data"]["consent"]["version"]}, headers=H(t1))
-        check("full: patient accepts the photo consent (1b row) → 201", r.status_code == 201)
+        # photos are off here, as in production: the consent API must refuse and write nothing (F5)
+        from app.models import PatientConsent  # noqa: E402
+        from app.models.base import utcnow  # noqa: E402
+        from app.modules.photo import consent as consent_text  # noqa: E402
+
+        settings_ = c.get("/api/v1/symptom-photos/settings", headers=H(t1)).get_json()["data"]
+        rows_before = q("SELECT COUNT(*) FROM patient_consents")
+        audits_before = q("SELECT COUNT(*) FROM audit_logs WHERE resource_type = 'patient_consents'")
+        r = c.post("/api/v1/patients/me/photo-consent", json={"version": settings_["consent"]["version"]}, headers=H(t1))
+        check("full, photos off: accepting the photo consent → 503 PHOTO_UPLOADS_DISABLED, no row / audit written",
+              settings_["upload_enabled"] is False and r.status_code == 503 and r.get_json()["error"]["code"] == "PHOTO_UPLOADS_DISABLED"
+              and q("SELECT COUNT(*) FROM patient_consents") == rows_before
+              and q("SELECT COUNT(*) FROM audit_logs WHERE resource_type = 'patient_consents'") == audits_before)
+        # (fixture) a 1b consent row as a photos-on period would leave it (SYNTHETIC, written directly), so the
+        # rollback checks below still prove that the bridge keeps Phase 1b data untouched
+        uid, pid = (db.session.execute(text("SELECT u.id, p.id FROM users u JOIN patient_profiles p ON p.user_id = u.id"
+                                            " WHERE u.email = 'trpt001@demo.local'")).one())
+        db.session.add(PatientConsent(patient_id=pid, consent_type=consent_text.CONSENT_TYPE, version=consent_text.CONSENT_VERSION,
+                                      content_sha256=consent_text.content_sha256(), accepted_by=uid, accepted_at=utcnow()))
+        db.session.commit()
+        check("full: (fixture) synthetic 1b consent row written directly", q("SELECT COUNT(*) FROM patient_consents") == rows_before + 1)
         rid = c.post("/api/v1/symptoms/records", json={"patient_id": "me", "form_code": "rt_skin_self_assessment",
                                                       "values": [{"definition_code": "skin_itch", "option_code": "yes"}], "notes": "橋接測試"}, headers=H(t1)).get_json()["data"]["id"]
         due = (datetime.now(timezone(timedelta(hours=8))) + timedelta(days=2)).replace(microsecond=0).isoformat()

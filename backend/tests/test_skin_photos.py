@@ -590,7 +590,36 @@ with app.app_context():
           s["upload_enabled"] is False and s["reason"] == "no_storage_backend" and r.status_code == 503 and code(r) == "PHOTO_UPLOADS_DISABLED"
           and r2.status_code == 503 and r3.status_code == 201)
     check("feature off: images cannot be read → 503 (no fallback storage)", content(pt, later).status_code == 503)
+
+    # F5: photos off → a consent can be revoked but never recorded (no patient_consents row, no CREATE audit)
+    def consent_rows():
+        return db.session.query(PatientConsent).filter_by(patient_id=p1.id).count()
+
+    def consent_audits():
+        return db.session.query(AuditLog).filter_by(resource_type="patient_consents", action="CREATE").count()
+
     app.extensions["photo_feature"] = real_feature
+    c.post("/api/v1/patients/me/photo-consent", json={"version": consent_text.CONSENT_VERSION}, headers=H(pt))  # (fixture) active consent
+    app.extensions["photo_feature"] = PhotoFeature(upload_enabled=False, view_enabled=False, reason="disabled_by_config", storage=None)
+    r = c.post("/api/v1/patients/me/photo-consent/revoke", headers=H(pt))
+    db.session.expire_all()
+    check("feature off: revoking an existing consent still works → 200, not accepted, row revoked",
+          r.status_code == 200 and r.get_json()["data"]["accepted"] is False
+          and db.session.query(PatientConsent).filter_by(patient_id=p1.id, revoked_at=None).count() == 0)
+    rows_before, audits_before = consent_rows(), consent_audits()
+    r = c.post("/api/v1/patients/me/photo-consent", json={"version": consent_text.CONSENT_VERSION}, headers=H(pt))
+    r_old = c.post("/api/v1/patients/me/photo-consent", json={"version": "skin-photo-2025-old"}, headers=H(pt))
+    db.session.expire_all()
+    check("feature off: accepting the consent → 503 PHOTO_UPLOADS_DISABLED (any version)",
+          r.status_code == 503 and code(r) == "PHOTO_UPLOADS_DISABLED" and r_old.status_code == 503 and code(r_old) == "PHOTO_UPLOADS_DISABLED")
+    check("feature off: …no patient_consents row and no consent CREATE audit written",
+          consent_rows() == rows_before and consent_audits() == audits_before
+          and db.session.query(PatientConsent).filter_by(patient_id=p1.id, revoked_at=None).count() == 0)
+    s = c.get("/api/v1/symptom-photos/settings", headers=H(pt)).get_json()["data"]
+    check("feature off: settings still report consent not accepted", s["consent"]["accepted"] is False)
+    app.extensions["photo_feature"] = real_feature
+    r = c.post("/api/v1/patients/me/photo-consent", json={"version": consent_text.CONSENT_VERSION}, headers=H(pt))
+    check("feature back on: the patient can accept again → 201", r.status_code == 201 and r.get_json()["data"]["accepted"] is True)
 
     def status_for(config_name, **cfg):
         fake = SimpleNamespace(config={"CONFIG_NAME": config_name, **cfg}, testing=False, instance_path=tempfile.gettempdir(), extensions={})
@@ -620,6 +649,22 @@ with app.app_context():
           not f.upload_enabled and f.view_enabled and f.reason == "consent_not_approved")
     f = status_for("staging", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION=consent_text.CONSENT_VERSION, **obj)
     check("…approved consent version → on", f.upload_enabled and f.reason is None and isinstance(f.storage, PrivateObjectStorage))
+    # production never runs on the draft consent text, even when PHOTO_CONSENT_APPROVED_VERSION names it
+    check("(fixture) the current consent text is the draft skin-photo-2026-11-draft-1",
+          consent_text.CONSENT_VERSION == "skin-photo-2026-11-draft-1" and consent_text.REVIEW_STATUS == "draft")
+    f = status_for("production", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION="skin-photo-2026-11-draft-1", **obj)
+    check("production + PHOTO_CONSENT_APPROVED_VERSION=skin-photo-2026-11-draft-1 → uploads off (consent_not_approved)",
+          not f.upload_enabled and f.reason == "consent_not_approved" and f.view_enabled)
+    real_text = (consent_text.CONSENT_VERSION, consent_text.REVIEW_STATUS)
+    consent_text.CONSENT_VERSION, consent_text.REVIEW_STATUS = "skin-photo-2026-12-v1", "approved"
+    f = status_for("production", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION="skin-photo-2026-12-v1", **obj)
+    check("production + a hospital-approved text (review status approved, matching version) → on", f.upload_enabled and f.reason is None)
+    f = status_for("production", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION="skin-photo-2026-11-draft-1", **obj)
+    check("production + approved text but the variable still names the draft → off", not f.upload_enabled and f.reason == "consent_not_approved")
+    consent_text.CONSENT_VERSION, consent_text.REVIEW_STATUS = "skin-photo-2026-12-draft-2", "approved"
+    f = status_for("production", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION="skin-photo-2026-12-draft-2", **obj)
+    check("production + a version string containing 'draft' → off", not f.upload_enabled and f.reason == "consent_not_approved")
+    consent_text.CONSENT_VERSION, consent_text.REVIEW_STATUS = real_text
     PrivateObjectStorage.sdk_available = real_sdk
     check("default config (base / staging / production): PHOTO_UPLOADS_ENABLED off, no backend",
           not __import__("app.config", fromlist=["StagingConfig"]).StagingConfig.PHOTO_UPLOADS_ENABLED

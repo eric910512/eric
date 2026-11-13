@@ -443,16 +443,21 @@ def _build_storage(app):
 
 def init_photos(app):
     """Decide once at start-up; ``photo_feature(app)`` reads the result."""
-    from app.modules.photo.consent import CONSENT_VERSION
+    from app.modules.photo.consent import CONSENT_VERSION, REVIEW_STATUS
 
     storage, problem = _build_storage(app)
+    approved = app.config.get("PHOTO_CONSENT_APPROVED_VERSION")
     reason = None
     if not app.config.get("PHOTO_UPLOADS_ENABLED"):
         reason = "disabled_by_config"
     elif problem:
         reason = problem
-    elif app.config.get("CONFIG_NAME") in PRODUCTION_LIKE and app.config.get("PHOTO_CONSENT_APPROVED_VERSION") != CONSENT_VERSION:
+    elif app.config.get("CONFIG_NAME") in PRODUCTION_LIKE and approved != CONSENT_VERSION:
         reason = "consent_not_approved"  # staging / production: only a hospital-approved consent text
+    elif app.config.get("CONFIG_NAME") == "production" and (REVIEW_STATUS != "approved" or "draft" in str(approved).lower()):
+        # production never runs on a draft text (e.g. PHOTO_CONSENT_APPROVED_VERSION=skin-photo-2026-11-draft-1), even
+        # when the variable matches it; staging may, with synthetic data only (pre-deployment rehearsals)
+        reason = "consent_not_approved"
     app.extensions["photo_feature"] = PhotoFeature(
         upload_enabled=reason is None, view_enabled=storage is not None, reason=reason, storage=storage,
     )

@@ -2,6 +2,7 @@
 
     python tests/predeploy/rehearsal_pg.py [OLD] [BRIDGE] [FULL]      # from backend/
     defaults: 71e9d8e  feature/phase1abc-schema-bridge  feature/skin-follow-up
+    each may also be a checkout directory (e.g. D:/app): its working tree, uncommitted changes included
     PG_BIN=<PostgreSQL bin directory>   another install (Render runs 17); default: the `pgserver` package (16)
 
 Each release is taken from git (`git archive`) and every step runs in its own process, like a deploy:
@@ -79,6 +80,12 @@ def main():
     rel = {}
     for name, rev in (("old", OLD), ("bridge", BRIDGE), ("full", FULL)):
         (tmp / name).mkdir()
+        if (Path(rev) / "backend").is_dir():  # a checkout directory: its working tree (changes not committed yet)
+            shutil.copytree(Path(rev) / "backend", tmp / name / "backend",
+                            ignore=shutil.ignore_patterns("instance", ".env", "__pycache__"))
+            rel[name] = tmp / name / "backend"
+            print(f"      {name:6s} = working tree of {rev}")
+            continue
         archive = subprocess.run(["git", "archive", rev, "backend"], cwd=REPO, capture_output=True, check=True).stdout
         subprocess.run(["tar", "-x", "-C", str(tmp / name)], input=archive, check=True)
         rel[name] = tmp / name / "backend"
