@@ -240,3 +240,24 @@ python tests/object_storage/photo_object_storage_check.py
 
   推估最壞情況：2 workers ×（閒置約 109 MB + 43 MB）+ master 約 30 MB ≈ **334 MB**，低於 512 MB 的 80%。Linux 上的實際數字以 Render Metrics 為準。
 - 不需要調整 `WEB_CONCURRENCY`／`GUNICORN_THREADS`。
+
+## 9. 全站啟用（所有患者、負責護理師；無白名單）與同意書（2026-11-13）
+
+### 9.1 同意書草案 `skin-photo-2026-11-draft-2`（仍是草稿，`REVIEW_STATUS = "draft"`）
+- 範圍改為**皮膚及傷口**照片；段落：照片用途、誰可以查看、不是即時監測、緊急狀況、拍攝提醒、撤回同意、保存期限、備份、資料存放地點。
+- 系統的實際行為直接寫明；院方尚未確認的政策在文字中以【待院方確認：…】標示：適用範圍、撤回後已送出照片的處理、保存年限、是否屬於病歷、備份保留天數、是否核可存放地點（Render，新加坡）。
+- 核准後：把核准文字寫進 `consent.py`，**另發不含 `draft` 的新版本**，`REVIEW_STATUS = "approved"`，docstring 寫核准單位／日期／文件編號，移除所有【待院方確認】（測試會檢查 approved 版本不得留有此標記）。
+
+### 9.2 啟用（`cancer-care-api` Environment；production 只接受已核准的同意書）
+| 變數 | 值 |
+|---|---|
+| `FLASK_ENV` | `production` |
+| `SEED_DEMO_DATA` | `false` |
+| `PHOTO_STORAGE_BACKEND` | `database` |
+| `PHOTO_DB_QUOTA_BYTES` | `209715200` |
+| `PHOTO_DB_DISK_BYTES` | `1073741824`（選填，資料庫 1 GB） |
+| `PHOTO_CONSENT_APPROVED_VERSION` | 核准版本字串（與 `consent.py` 相同）|
+| `PHOTO_UPLOADS_ENABLED` | `true`（最後設定）|
+
+### 9.3 一鍵關閉（回退）
+- 把 `PHOTO_UPLOADS_ENABLED` 改為 `false`（或刪除）→ Save → 重新部署（重新啟動時讀取）。上傳與同意立即回 `503 PHOTO_UPLOADS_DISABLED`，前端顯示「照片上傳目前未開放」；已送出的照片仍可由患者本人與負責護理師查看；資料庫不需任何動作。

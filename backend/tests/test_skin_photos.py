@@ -720,10 +720,14 @@ with app.app_context():
     f = status_for("staging", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION=consent_text.CONSENT_VERSION, **obj)
     check("…approved consent version → on", f.upload_enabled and f.reason is None and isinstance(f.storage, PrivateObjectStorage))
     # production never runs on the draft consent text, even when PHOTO_CONSENT_APPROVED_VERSION names it
-    check("(fixture) the current consent text is the draft skin-photo-2026-11-draft-1",
-          consent_text.CONSENT_VERSION == "skin-photo-2026-11-draft-1" and consent_text.REVIEW_STATUS == "draft")
-    f = status_for("production", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION="skin-photo-2026-11-draft-1", **obj)
-    check("production + PHOTO_CONSENT_APPROVED_VERSION=skin-photo-2026-11-draft-1 → uploads off (consent_not_approved)",
+    check("(fixture) the current consent text is still a draft (REVIEW_STATUS draft, version contains 'draft')",
+          consent_text.REVIEW_STATUS == "draft" and "draft" in consent_text.CONSENT_VERSION)
+    all_text = json.dumps(consent_text.content(), ensure_ascii=False)
+    check("draft-2 covers skin AND wound photos and marks every unconfirmed policy (retention, withdrawal, backups, location)",
+          "傷口" in all_text and all(w in all_text for w in ("保存年限", "撤回後已送出照片", "備份保留天數", "是否核可此存放地點")))
+    check("an approved text may never keep a 【待院方確認】 marker", consent_text.REVIEW_STATUS != "approved" or "待院方確認" not in all_text)
+    f = status_for("production", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION=consent_text.CONSENT_VERSION, **obj)
+    check(f"production + PHOTO_CONSENT_APPROVED_VERSION={consent_text.CONSENT_VERSION} (the current draft) → uploads off (consent_not_approved)",
           not f.upload_enabled and f.reason == "consent_not_approved" and f.view_enabled)
     real_text = (consent_text.CONSENT_VERSION, consent_text.REVIEW_STATUS)
     consent_text.CONSENT_VERSION, consent_text.REVIEW_STATUS = "skin-photo-2026-12-v1", "approved"
