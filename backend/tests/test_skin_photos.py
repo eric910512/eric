@@ -715,8 +715,13 @@ with app.app_context():
     check("object storage configured but no SDK installed → off", not f.upload_enabled and f.reason == "object_storage_not_configured")
     PrivateObjectStorage.sdk_available = staticmethod(lambda: True)
     f = status_for("staging", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", **obj)
-    check("staging + object storage, consent text not approved → uploads off (consent_not_approved), stored photos readable",
+    check("staging test site, PHOTO_CONSENT_APPROVED_VERSION not set → the current (draft) text is used, uploads on",
+          f.upload_enabled and f.reason is None)
+    f = status_for("staging", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION="skin-photo-2025-old", **obj)
+    check("staging + a variable naming another version → uploads off (consent_not_approved), stored photos readable",
           not f.upload_enabled and f.view_enabled and f.reason == "consent_not_approved")
+    f = status_for("production", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", **obj)
+    check("production, PHOTO_CONSENT_APPROVED_VERSION not set → off (consent_not_approved)", not f.upload_enabled and f.reason == "consent_not_approved")
     f = status_for("staging", PHOTO_UPLOADS_ENABLED=True, PHOTO_STORAGE_BACKEND="object", PHOTO_CONSENT_APPROVED_VERSION=consent_text.CONSENT_VERSION, **obj)
     check("…approved consent version → on", f.upload_enabled and f.reason is None and isinstance(f.storage, PrivateObjectStorage))
     # production never runs on the draft consent text, even when PHOTO_CONSENT_APPROVED_VERSION names it
@@ -740,9 +745,21 @@ with app.app_context():
     check("production + a version string containing 'draft' → off", not f.upload_enabled and f.reason == "consent_not_approved")
     consent_text.CONSENT_VERSION, consent_text.REVIEW_STATUS = real_text
     PrivateObjectStorage.sdk_available = real_sdk
-    check("default config (base / staging / production): PHOTO_UPLOADS_ENABLED off, no backend",
-          not __import__("app.config", fromlist=["StagingConfig"]).StagingConfig.PHOTO_UPLOADS_ENABLED
-          and __import__("app.config", fromlist=["ProductionConfig"]).ProductionConfig.PHOTO_STORAGE_BACKEND in ("", None))
+    cfg_mod = __import__("app.config", fromlist=["StagingConfig", "ProductionConfig"])
+    if not any(k.startswith("PHOTO_") for k in os.environ):  # class defaults are read from the environment at import
+        check("default config production: PHOTO_UPLOADS_ENABLED off, no backend, no quota",
+              not cfg_mod.ProductionConfig.PHOTO_UPLOADS_ENABLED and cfg_mod.ProductionConfig.PHOTO_STORAGE_BACKEND in ("", None)
+              and cfg_mod.ProductionConfig.PHOTO_DB_QUOTA_BYTES is None)
+        check("default config staging (test site): photos on, database storage, 200 MiB quota",
+              cfg_mod.StagingConfig.PHOTO_UPLOADS_ENABLED is True and cfg_mod.StagingConfig.PHOTO_STORAGE_BACKEND == "database"
+              and cfg_mod.StagingConfig.PHOTO_DB_QUOTA_BYTES == 209715200)
+        f = status_for("staging", **{k: getattr(cfg_mod.StagingConfig, k) for k in dir(cfg_mod.StagingConfig) if k.startswith("PHOTO_")},
+                       SQLALCHEMY_DATABASE_URI="postgresql://u:p@127.0.0.1:1/x")
+        check("staging defaults, no variable set → uploads on with DatabasePhotoStorage (200 MiB)",
+              f.upload_enabled and f.storage is not None and f.storage.quota_bytes == 209715200, f.reason)
+        f = status_for("production", **{k: getattr(cfg_mod.ProductionConfig, k) for k in dir(cfg_mod.ProductionConfig) if k.startswith("PHOTO_")},
+                       SQLALCHEMY_DATABASE_URI="postgresql://u:p@127.0.0.1:1/x")
+        check("production defaults, no variable set → off (disabled_by_config)", not f.upload_enabled and f.reason == "disabled_by_config")
 
     # ================================================================ adapters
     calls_ = []

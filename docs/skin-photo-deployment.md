@@ -260,4 +260,10 @@ python tests/object_storage/photo_object_storage_check.py
 | `PHOTO_UPLOADS_ENABLED` | `true`（最後設定）|
 
 ### 9.3 一鍵關閉（回退）
-- 把 `PHOTO_UPLOADS_ENABLED` 改為 `false`（或刪除）→ Save → 重新部署（重新啟動時讀取）。上傳與同意立即回 `503 PHOTO_UPLOADS_DISABLED`，前端顯示「照片上傳目前未開放」；已送出的照片仍可由患者本人與負責護理師查看；資料庫不需任何動作。
+- 把 `PHOTO_UPLOADS_ENABLED` 改為 `false`（production 也可刪除；**staging 刪除 = 預設開啟，必須設 `false`**）→ Save → 重新部署（重新啟動時讀取）。上傳與同意立即回 `503 PHOTO_UPLOADS_DISABLED`，前端顯示「照片上傳目前未開放」；已送出的照片仍可由患者本人與負責護理師查看；資料庫不需任何動作。
+
+### 9.4 staging 測試站預設開啟（2026-11-17；僅限合成帳號與合成圖片）
+- `FLASK_ENV=staging` 時**不需任何照片變數**：`PHOTO_UPLOADS_ENABLED` 預設 `true`、`PHOTO_STORAGE_BACKEND` 預設 `database`（現有 PostgreSQL）、`PHOTO_DB_QUOTA_BYTES` 預設 `209715200`（200 MiB）；`PHOTO_CONSENT_APPROVED_VERSION` 未設定時使用 `consent.py` 目前的版本（草稿亦可）。
+- 有設定的變數仍會覆蓋預設值：`PHOTO_UPLOADS_ENABLED=false` → 關閉；`PHOTO_CONSENT_APPROVED_VERSION` 若寫的是其他版本 → 關閉（`consent_not_approved`）；`PHOTO_STORAGE_BACKEND=local`／`object` 或無效的配額 → 關閉。
+- production 不變：預設關閉，且只接受已核准、不含 `draft` 的同意書版本（§9.2）。
+- 壓縮、像素上限、同時處理數、配額鎖與存取權限（本人／目前負責的護理師；管理員 403）不變。

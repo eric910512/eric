@@ -204,6 +204,12 @@ class StagingConfig(ProductionConfig):
     synthetic demo data (`flask seed dev`) is allowed. No real patient data."""
 
     ALLOW_DEMO_SEED = True
+    # Test site: photos ON by default (no Render variable needed) — the existing PostgreSQL, a 200 MiB quota and
+    # the current consent text (a draft is allowed here; app/services/photo_storage.py: init_photos). Every
+    # variable still overrides its default; PHOTO_UPLOADS_ENABLED=false is the emergency off switch.
+    PHOTO_UPLOADS_ENABLED = _flag("PHOTO_UPLOADS_ENABLED", True)
+    PHOTO_STORAGE_BACKEND = os.environ.get("PHOTO_STORAGE_BACKEND", "database").strip().lower()
+    PHOTO_DB_QUOTA_BYTES = _number("PHOTO_DB_QUOTA_BYTES", 200 * 1024 * 1024, int)
 
 
 class TestingConfig(Config):

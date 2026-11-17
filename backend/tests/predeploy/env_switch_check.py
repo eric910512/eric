@@ -16,7 +16,8 @@ after changing one environment variable).
      - photos off by default (disabled_by_config); consent refused (F5);
      - training-account batches refused (403 TRAINING_ACCOUNTS_DISABLED).
   3. Photo switch matrix (configuration only, no upload): uploads ON + database storage + the DRAFT consent version
-     → staging turns photos ON, production keeps them OFF (consent_not_approved).
+     → staging turns photos ON, production keeps them OFF (consent_not_approved); with NO photo variable staging
+     is ON (test-site defaults) and production OFF; staging + PHOTO_UPLOADS_ENABLED=false → OFF.
   4. ROLLBACK: STAGING again on the same database — everything written in production is still served.
 """
 import json
@@ -149,10 +150,21 @@ def phase_main():
         elif PHASE == "photo-gate":
             f = app.extensions["photo_feature"]
             print(f"[INFO] [{PHASE}] {env_name}: upload_enabled={f.upload_enabled} reason={f.reason}")
-            expect_on = env_name == "staging"
-            check(f"{env_name} + PHOTO_UPLOADS_ENABLED=true + database + the DRAFT consent version → uploads "
-                  f"{'ON (staging does not refuse a draft)' if expect_on else 'OFF (consent_not_approved)'}",
-                  f.upload_enabled is expect_on and (expect_on or f.reason == "consent_not_approved"))
+            label = os.environ.get("ENV_CHECK_LABEL")
+            if label == "staging-defaults":  # no PHOTO_* variable at all (the test site's default)
+                check("staging with NO photo variable → uploads ON: database storage, 200 MiB, the current (draft) text",
+                      f.upload_enabled is True and f.storage is not None and f.storage.quota_bytes == 209715200, f.reason)
+            elif label == "staging-off":
+                check("staging with only PHOTO_UPLOADS_ENABLED=false → uploads OFF (disabled_by_config), photos readable",
+                      f.upload_enabled is False and f.reason == "disabled_by_config" and f.view_enabled)
+            elif label == "production-defaults":
+                check("production with NO photo variable → uploads OFF (disabled_by_config)",
+                      f.upload_enabled is False and f.reason == "disabled_by_config")
+            else:
+                expect_on = env_name == "staging"
+                check(f"{env_name} + PHOTO_UPLOADS_ENABLED=true + database + the DRAFT consent version → uploads "
+                      f"{'ON (staging does not refuse a draft)' if expect_on else 'OFF (consent_not_approved)'}",
+                      f.upload_enabled is expect_on and (expect_on or f.reason == "consent_not_approved"))
     print(f"{sum(ok)}/{len(ok)} [{PHASE}] checks passed")
     sys.exit(0 if all(ok) else 1)
 
@@ -227,6 +239,9 @@ def main():
                       PHOTO_CONSENT_APPROVED_VERSION=consent)
         phase("photo-gate", "staging", **photos)
         phase("photo-gate", "production", **photos)
+        phase("photo-gate", "staging", ENV_CHECK_LABEL="staging-defaults")
+        phase("photo-gate", "staging", ENV_CHECK_LABEL="staging-off", PHOTO_UPLOADS_ENABLED="false")
+        phase("photo-gate", "production", ENV_CHECK_LABEL="production-defaults")
 
         print("----- 4. ROLLBACK: STAGING again")
         phase("staging-again", "staging")

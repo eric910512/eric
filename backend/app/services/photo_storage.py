@@ -447,6 +447,8 @@ def init_photos(app):
 
     storage, problem = _build_storage(app)
     approved = app.config.get("PHOTO_CONSENT_APPROVED_VERSION")
+    if app.config.get("CONFIG_NAME") == "staging" and not approved:
+        approved = CONSENT_VERSION  # test site (synthetic data only): the current text, draft included; production unchanged
     reason = None
     if not app.config.get("PHOTO_UPLOADS_ENABLED"):
         reason = "disabled_by_config"
