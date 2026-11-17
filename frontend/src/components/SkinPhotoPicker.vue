@@ -30,13 +30,15 @@ const remaining = computed(() => props.max - items.value.length)
 const STATUS = { preparing: '處理中…', uploading: '上傳中…', uploaded: '已上傳（送出後才會給護理師）', failed: '上傳失敗', invalid: '無法使用' }
 const newKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-function open(input) {
+// `which` is 'camera' | 'library' — a name, not the ref: in the template a ref is unwrapped to the <input> element
+// itself, so `input.value` there was the input's (empty) value string and the button did nothing.
+function open(which) {
   notice.value = ''
   if (remaining.value <= 0) {
     notice.value = `每次最多 ${props.max} 張照片。`
     return
   }
-  input.value?.click()
+  ;(which === 'camera' ? camera : library).value?.click() // synchronously, inside the click (user gesture)
 }
 
 async function onPick(event) {
@@ -89,7 +91,7 @@ async function remove(item) {
 
 function again(item) {
   remove(item)
-  open(library)
+  open('library')
 }
 
 onBeforeUnmount(() => {
@@ -101,9 +103,9 @@ onBeforeUnmount(() => {
   <div class="space-y-3" data-photo-picker>
     <div class="flex flex-wrap gap-2">
       <button type="button" class="inline-flex min-h-12 items-center gap-2 rounded-full border border-care px-4 font-bold text-care hover:bg-care-soft"
-        data-photo-camera @click="open(camera)">拍照</button>
+        data-photo-camera @click="open('camera')">拍照</button>
       <button type="button" class="inline-flex min-h-12 items-center gap-2 rounded-full border border-line px-4 font-bold hover:bg-mist"
-        data-photo-library @click="open(library)">從相簿選擇</button>
+        data-photo-library @click="open('library')">從相簿選擇</button>
       <input ref="camera" type="file" :accept="ACCEPT" capture="environment" class="sr-only" tabindex="-1" aria-hidden="true" data-photo-input-camera @change="onPick" />
       <input ref="library" type="file" :accept="ACCEPT" multiple class="sr-only" tabindex="-1" aria-hidden="true" data-photo-input-library @change="onPick" />
     </div>

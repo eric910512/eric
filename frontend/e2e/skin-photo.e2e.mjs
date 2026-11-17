@@ -172,6 +172,27 @@ for (const [mode, base] of [['MOCK', MOCK_URL], ['API', WEB_URL]]) {
   check(`${mode} the picker accepts JPEG / PNG / WebP (+ HEIC to explain it), camera uses capture`,
     (await p.$eval('[data-photo-input-library]', (i) => i.accept)).includes('image/webp') && (await p.$eval('[data-photo-input-camera]', (i) => i.getAttribute('capture'))) === 'environment')
 
+  // ---------------------------------------------------------------- the BUTTONS open the system picker (a real mouse click,
+  // i.e. a user gesture, like a person on Windows Chrome / Edge; capture=environment makes phones open the camera)
+  const chooserFrom = async (sel) => {
+    const [fc] = await Promise.all([p.waitForFileChooser({ timeout: 5000 }).catch(() => null), p.click(sel)])
+    return fc
+  }
+  const camFc = await chooserFrom('[data-photo-camera]')
+  check(`${mode} 拍照 button → opens the file chooser (single photo)`, !!camFc && camFc.isMultiple() === false)
+  await camFc?.cancel()
+  const libFc = await chooserFrom('[data-photo-library]')
+  check(`${mode} 從相簿選擇 button → opens the file chooser (several photos)`, !!libFc && libFc.isMultiple() === true)
+  if (mode === 'MOCK') { // a picked synthetic image → preview → remove (API mode keeps its upload budget for the flow below)
+    await libFc?.accept([IMG.a])
+    check(`${mode} picked through the button → preview shown, uploaded`, await imagesLoaded(p, '[data-photo-preview]', 1)
+      && await waitSel(p, '[data-photo-item=uploaded]'))
+    await click(p, '[data-photo-item] [data-photo-remove]')
+    check(`${mode} …remove → the photo is gone`, await waitFn(p, () => !document.querySelector('[data-photo-item]')))
+  } else {
+    await libFc?.cancel()
+  }
+
   // ---------------------------------------------------------------- refused files: a reason each
   await choose(p, HEIC)
   check(`${mode} HEIC → refused with a clear reason (最相容)`, await waitFn(p, () => document.querySelector('[data-photo-item=invalid] [data-photo-error]')?.innerText.includes('HEIC')))
